@@ -3,6 +3,7 @@
 
 #include <glad/glad.h>
 #include <string>
+#include "glm/matrix.hpp"
 
 struct Shader
 {
@@ -35,6 +36,11 @@ struct Shader
     /// Set a float uniform's value
     /// </summary>
     void SetFloat(GLint location, GLfloat value) const;
+
+    /// <summary>
+    /// Set a float uniform's value
+    /// </summary>
+    void SetMat4(GLint location, glm::mat4 value) const;
 };
 
 #endif // SHADER_H

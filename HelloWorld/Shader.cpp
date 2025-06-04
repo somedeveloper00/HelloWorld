@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <iostream>
+#include "glm/gtc/type_ptr.hpp"
 
 static GLuint createShader(const char* source, GLenum type)
 {
@@ -52,7 +53,10 @@ void Shader::Use() const
 
 GLint Shader::GetUniformLocation(const char* name) const
 {
-    return glGetUniformLocation(id, name);
+    auto loc = glGetUniformLocation(id, name);
+    if (loc == -1)
+        std::cerr << "uniform \"" << name << "\" does not exist" << std::endl;
+    return loc;
 }
 
 void Shader::SetInt(GLint location, GLint value) const
@@ -63,5 +67,10 @@ void Shader::SetInt(GLint location, GLint value) const
 void Shader::SetFloat(GLint location, GLfloat value) const
 {
     glUniform1f(location, value);
+}
+
+void Shader::SetMat4(GLint location, glm::mat4 value) const
+{
+    glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(value));
 }
 

@@ -71,7 +71,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>E:\GLAD\include;E:\OpenGL\include;$(IncludePath)</IncludePath>
+    <IncludePath>E:\OpenGL\include;E:\GLAD\include;E:\glm\include;$(IncludePath)</IncludePath>
     <LibraryPath>E:\OpenGL\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -136,10 +136,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="IO.hpp" />
+    <ClInclude Include="stb_image.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shader.frag" />
     <None Include="shader.vert" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="awesomeface.png" />
+    <Image Include="container.jpg" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
