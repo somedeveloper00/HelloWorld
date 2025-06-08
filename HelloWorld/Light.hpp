@@ -35,3 +35,40 @@ struct Light
     {
     }
 };
+
+struct alignas(16) LightBufferData
+{
+    glm::vec3 position;
+    float __padding0;
+    glm::vec3 diffuseColor;
+    float __padding1;
+    glm::vec3 specularColor;
+    float __padding2;
+    glm::vec3 forward;
+    float cutoff;
+    float outerCutoff;
+    float attenuationConst;
+    float attenuationLinear;
+    float attenuationQuad;
+
+    LightBufferData() {}
+
+    LightBufferData(const Light& light) :
+        position(light.transform.position),
+        diffuseColor(light.diffuseColor),
+        specularColor(light.specularColor),
+        forward(light.transform.getForward()),
+        cutoff(std::cos(glm::radians(light.cutoffAngle))),
+        outerCutoff(std::cos(glm::radians(light.outerCutoffAngle))),
+        attenuationConst(light.attenuationConst),
+        attenuationLinear(light.attenuationLinear),
+        attenuationQuad(light.attenuationQuad)
+    {
+    }
+};
+
+struct alignas(16) LightBlock
+{
+    alignas(4) int lightsCount;
+    alignas(16) LightBufferData lights[8];
+};

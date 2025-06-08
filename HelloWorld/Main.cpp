@@ -212,6 +212,7 @@ int main()
 
     constexpr int lightsCount = 8;
     Light lights[lightsCount];
+    LightBlock lightBlock;
     for (size_t i = 0; i < lightsCount; i++)
     {
         lights[i].transform.position.x = ((int)i % 4 - 1) * 5;
@@ -221,14 +222,19 @@ int main()
         lights[i].diffuseColor = glm::normalize(glm::vec3(abs(sin(1 + i)), abs(cos(1 + i)), abs(sin(1 + 2 * i))));
     }
 
-    GLuint vao, vbo;
+    GLuint vao, vbo, ubo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ubo);
 
     glBindVertexArray(vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(lightBlock), nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, ubo);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), NULL);
     glEnableVertexAttribArray(0);
@@ -271,7 +277,10 @@ int main()
             lights[i].cutoffAngle = lerp(10, 50, sin(lastFrameTime) / 2.f + 0.5f);
             lights[i].outerCutoffAngle = lights[i].cutoffAngle + lerp(1, 45, sin(lastFrameTime * 2) / 2.f + 0.5f);
             lights[i].transform.position.z = sin(lastFrameTime * 2) * 2;
+            lightBlock.lights[i] = lights[i];
         }
+        lightBlock.lightsCount = lightsCount;
+
         // cubes
         glBindVertexArray(vao);
         glActiveTexture(GL_TEXTURE0);
@@ -279,19 +288,24 @@ int main()
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, texture2);
         cubeShader.Use();
-        cubeShader.SetInt(cubeShader.GetUniformLocation("lightsCount"), lightsCount);
-        for (size_t i = 0; i < lightsCount; i++)
-        {
-            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].position").c_str()), lights[i].transform.position);
-            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].diffuseColor").c_str()), lights[i].diffuseColor);
-            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].specularColor").c_str()), lights[i].specularColor);
-            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].forward").c_str()), lights[i].transform.getForward());
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].cutoff").c_str()), std::cos(glm::radians(lights[i].cutoffAngle)));
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].outerCutoff").c_str()), std::cos(glm::radians(lights[i].outerCutoffAngle)));
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationConst").c_str()), lights[i].attenuationConst);
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationLinear").c_str()), lights[i].attenuationLinear);
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationQuad").c_str()), lights[i].attenuationQuad);
-        }
+
+        glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(lightBlock), &lightBlock);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+        //cubeShader.SetInt(cubeShader.GetUniformLocation("lightsCount"), lightsCount);
+        //for (size_t i = 0; i < lightsCount; i++)
+        //{
+        //    cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].position").c_str()), lights[i].transform.position);
+        //    cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].diffuseColor").c_str()), lights[i].diffuseColor);
+        //    cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].specularColor").c_str()), lights[i].specularColor);
+        //    cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].forward").c_str()), lights[i].transform.getForward());
+        //    cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].cutoff").c_str()), std::cos(glm::radians(lights[i].cutoffAngle)));
+        //    cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].outerCutoff").c_str()), std::cos(glm::radians(lights[i].outerCutoffAngle)));
+        //    cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationConst").c_str()), lights[i].attenuationConst);
+        //    cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationLinear").c_str()), lights[i].attenuationLinear);
+        //    cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationQuad").c_str()), lights[i].attenuationQuad);
+        //}
         glfwGetWindowSize(window, &width, &height);
         cubeShader.SetMat4(cubeShader.GetUniformLocation("projection"), camera.getProjectionMatrix(width, height));
         cubeShader.SetMat4(cubeShader.GetUniformLocation("view"), camera.getViewMatrix());

@@ -29,8 +29,11 @@ struct Light {
     float attenuationQuad; // quadratic attenuation
 };
 
-uniform Light lights[MAX_LIGHTS];
-uniform int lightsCount;
+layout(std140, binding = 0) uniform LightBlock {
+    int lightsCount;
+    Light lights[MAX_LIGHTS];
+};
+
 uniform Material material;
 uniform vec3 viewPos;
 
