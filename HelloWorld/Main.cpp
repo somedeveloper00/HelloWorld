@@ -170,7 +170,6 @@ int main()
     if (!cubeShader)
         return -1;
 
-
     stbi_set_flip_vertically_on_load(true);
     GLuint texture1;
     glGenTextures(1, &texture1);
@@ -211,15 +210,14 @@ int main()
     cubeShader.SetInt(cubeShader.GetUniformLocation("material.diffuseTexture"), 0);
     cubeShader.SetInt(cubeShader.GetUniformLocation("material.specularTexture"), 1);
 
-    constexpr int lightsCount = 4;
+    constexpr int lightsCount = 8;
     Light lights[lightsCount];
-    //LightBufferObject lightsData[lightsCount];
     for (size_t i = 0; i < lightsCount; i++)
     {
-        lights[i].transform.position.x = ((int)i % 2 - 1) * 10;
-        lights[i].transform.position.y = (((int)i / 2) - 1) * 10;
+        lights[i].transform.position.x = ((int)i % 4 - 1) * 5;
+        lights[i].transform.position.y = (((int)i / 4) - 1) * 5;
         lights[i].transform.position.z = 1;
-        lights[i].transform.lookAt(glm::vec3(lights[i].transform.position + glm::vec3(0.f, 0.f, -1.f)));
+        lights[i].transform.lookAt(glm::vec3(lights[i].transform.position + glm::vec3(0.f, 1.f, -1.f)));
         lights[i].diffuseColor = glm::normalize(glm::vec3(abs(sin(1 + i)), abs(cos(1 + i)), abs(sin(1 + 2 * i))));
     }
 
@@ -268,10 +266,12 @@ int main()
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // update light data
-//        for (size_t i = 0; i < lightsCount; i++)
-//            lightsData[i] = { lights[i] };
-
+        for (size_t i = 0; i < lightsCount; i++)
+        {
+            lights[i].cutoffAngle = lerp(10, 50, sin(lastFrameTime) / 2.f + 0.5f);
+            lights[i].outerCutoffAngle = lights[i].cutoffAngle + lerp(1, 45, sin(lastFrameTime * 2) / 2.f + 0.5f);
+            lights[i].transform.position.z = sin(lastFrameTime * 2) * 2;
+        }
         // cubes
         glBindVertexArray(vao);
         glActiveTexture(GL_TEXTURE0);
@@ -283,12 +283,11 @@ int main()
         for (size_t i = 0; i < lightsCount; i++)
         {
             cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].position").c_str()), lights[i].transform.position);
-            cubeShader.SetVec3(cubeShader.GetUniformLocation("lights[0].position"), lights[i].transform.position);
             cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].diffuseColor").c_str()), lights[i].diffuseColor);
             cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].specularColor").c_str()), lights[i].specularColor);
             cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].forward").c_str()), lights[i].transform.getForward());
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].cutoff").c_str()), lights[i].cutOffAngle);
-            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].smoothCone").c_str()), lights[i].cutOffSmoothCone);
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].cutoff").c_str()), std::cos(glm::radians(lights[i].cutoffAngle)));
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].outerCutoff").c_str()), std::cos(glm::radians(lights[i].outerCutoffAngle)));
             cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationConst").c_str()), lights[i].attenuationConst);
             cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationLinear").c_str()), lights[i].attenuationLinear);
             cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationQuad").c_str()), lights[i].attenuationQuad);
@@ -297,8 +296,6 @@ int main()
         cubeShader.SetMat4(cubeShader.GetUniformLocation("projection"), camera.getProjectionMatrix(width, height));
         cubeShader.SetMat4(cubeShader.GetUniformLocation("view"), camera.getViewMatrix());
         cubeShader.SetVec3(cubeShader.GetUniformLocation("material.ambient"), glm::vec3(.0f));
-        cubeShader.SetVec3(cubeShader.GetUniformLocation("material.diffuse"), glm::vec3(1.f));
-        cubeShader.SetVec3(cubeShader.GetUniformLocation("material.specular"), glm::vec3(1.f));
         cubeShader.SetFloat(cubeShader.GetUniformLocation("material.shininess"), 32);
         cubeShader.SetVec3(cubeShader.GetUniformLocation("viewPos"), camera.transform.position);
 
