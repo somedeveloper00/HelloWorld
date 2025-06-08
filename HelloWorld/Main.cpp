@@ -3,12 +3,14 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <vector>
 #include "Shader.hpp"
 #include "IO.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.hpp"
 
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include "glm/glm.hpp"
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
@@ -24,14 +26,6 @@ glm::vec2 cursorPosDelta;
 
 Camera camera(Transform(glm::vec3(0, 0, 3.f)));
 
-static void printCameraPos()
-{
-    auto forward = camera.transform.getForward();
-    auto up = camera.transform.getUp();
-    auto pos = camera.transform.position;
-    std::cout << "pos: " << pos.x << " " << pos.y << " " << pos.z << " for: " << forward.x << " " << forward.y << " " << forward.z << " up: " << up.x << " " << up.y << " " << up.z << "\n";
-}
-
 static void framebufferSizeCallback(GLFWwindow* window, GLsizei width, GLsizei height)
 {
     glViewport(0, 0, width, height);
@@ -42,7 +36,7 @@ static void processInput(GLFWwindow* window)
     if (glfwGetKey(window, GLFW_KEY_ESCAPE))
         glfwSetWindowShouldClose(window, true);
     const bool running = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
-    const float spd = (running ? 5.f : 1.f) * deltaTime;
+    const float spd = (running ? 50.f : 1.f) * deltaTime;
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         camera.transform.position += camera.transform.getForward() * spd;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
@@ -67,8 +61,6 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
     camera.pitch = camera.pitch > 89.f ? 89.f : camera.pitch;
     camera.pitch = camera.pitch < -89.f ? -89.f : camera.pitch;
     camera.updateTransform();
-
-    printCameraPos();
 }
 
 static void windowFocusCallback(GLFWwindow* window, int focused)
@@ -152,12 +144,10 @@ Transform cubePositions[] = {
 
 int main()
 {
-    printCameraPos();
-
     // initialize GLFW
     glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(800, 600, "LeanOpenGL", NULL, NULL);
     if (window == NULL)
@@ -179,6 +169,7 @@ int main()
     Shader cubeShader(readFile("shader.vert"), readFile("shader.frag"));
     if (!cubeShader)
         return -1;
+
 
     stbi_set_flip_vertically_on_load(true);
     GLuint texture1;
@@ -220,6 +211,18 @@ int main()
     cubeShader.SetInt(cubeShader.GetUniformLocation("material.diffuseTexture"), 0);
     cubeShader.SetInt(cubeShader.GetUniformLocation("material.specularTexture"), 1);
 
+    constexpr int lightsCount = 4;
+    Light lights[lightsCount];
+    //LightBufferObject lightsData[lightsCount];
+    for (size_t i = 0; i < lightsCount; i++)
+    {
+        lights[i].transform.position.x = ((int)i % 2 - 1) * 10;
+        lights[i].transform.position.y = (((int)i / 2) - 1) * 10;
+        lights[i].transform.position.z = 1;
+        lights[i].transform.lookAt(glm::vec3(lights[i].transform.position + glm::vec3(0.f, 0.f, -1.f)));
+        lights[i].diffuseColor = glm::normalize(glm::vec3(abs(sin(1 + i)), abs(cos(1 + i)), abs(sin(1 + 2 * i))));
+    }
+
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -244,7 +247,6 @@ int main()
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), NULL);
     glEnableVertexAttribArray(0);
     Shader lightShader(readFile("lightShader.vert"), readFile("lightShader.frag"));
-    PointLight light(glm::vec3(0.f, 2.f, 0.f), 5.f * glm::vec3(1.f, 1.f, 1.f));
 
     // initialize render loop
     glViewport(0, 0, 800, 600);
@@ -259,10 +261,16 @@ int main()
         deltaTime = glfwGetTime() - lastFrameTime;
         lastFrameTime = glfwGetTime();
 
+        std::cout << "frame-time:" << deltaTime << " fps:" << (int)(1 / deltaTime) << "\n";
+
         processInput(window);
 
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // update light data
+//        for (size_t i = 0; i < lightsCount; i++)
+//            lightsData[i] = { lights[i] };
 
         // cubes
         glBindVertexArray(vao);
@@ -271,16 +279,29 @@ int main()
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, texture2);
         cubeShader.Use();
+        cubeShader.SetInt(cubeShader.GetUniformLocation("lightsCount"), lightsCount);
+        for (size_t i = 0; i < lightsCount; i++)
+        {
+            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].position").c_str()), lights[i].transform.position);
+            cubeShader.SetVec3(cubeShader.GetUniformLocation("lights[0].position"), lights[i].transform.position);
+            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].diffuseColor").c_str()), lights[i].diffuseColor);
+            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].specularColor").c_str()), lights[i].specularColor);
+            cubeShader.SetVec3(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].forward").c_str()), lights[i].transform.getForward());
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].cutoff").c_str()), lights[i].cutOffAngle);
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].smoothCone").c_str()), lights[i].cutOffSmoothCone);
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationConst").c_str()), lights[i].attenuationConst);
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationLinear").c_str()), lights[i].attenuationLinear);
+            cubeShader.SetFloat(cubeShader.GetUniformLocation(std::string("lights[" + std::to_string(i) + "].attenuationQuad").c_str()), lights[i].attenuationQuad);
+        }
         glfwGetWindowSize(window, &width, &height);
         cubeShader.SetMat4(cubeShader.GetUniformLocation("projection"), camera.getProjectionMatrix(width, height));
         cubeShader.SetMat4(cubeShader.GetUniformLocation("view"), camera.getViewMatrix());
         cubeShader.SetVec3(cubeShader.GetUniformLocation("material.ambient"), glm::vec3(.0f));
         cubeShader.SetVec3(cubeShader.GetUniformLocation("material.diffuse"), glm::vec3(1.f));
         cubeShader.SetVec3(cubeShader.GetUniformLocation("material.specular"), glm::vec3(1.f));
-        cubeShader.SetFloat(cubeShader.GetUniformLocation("material.shininess"), 80);
-        cubeShader.SetVec3(cubeShader.GetUniformLocation("light.color"), light.color);
-        cubeShader.SetVec3(cubeShader.GetUniformLocation("light.position"), light.transform.position);
+        cubeShader.SetFloat(cubeShader.GetUniformLocation("material.shininess"), 32);
         cubeShader.SetVec3(cubeShader.GetUniformLocation("viewPos"), camera.transform.position);
+
         for (size_t i = 0; i < sizeof(cubePositions) / sizeof(Transform); i++)
         {
             cubePositions[i].rotateAround(glm::vec3(1.f, 0.f, 0.f), .1f * deltaTime * (i + 0));
@@ -290,20 +311,22 @@ int main()
             glDrawArrays(GL_TRIANGLES, 0, 36);
         }
 
-        // light
+        // draw light cubes
         glBindVertexArray(lightVao);
-        light.transform.position.x = glm::sin(lastFrameTime) * 10;
-        light.transform.position.y = glm::cos(lastFrameTime) * 10;
         lightShader.Use();
-        lightShader.SetVec3(lightShader.GetUniformLocation("lightColor"), light.color);
         lightShader.SetMat4(lightShader.GetUniformLocation("projection"), camera.getProjectionMatrix(width, height));
         lightShader.SetMat4(lightShader.GetUniformLocation("view"), camera.getViewMatrix());
-        lightShader.SetMat4(lightShader.GetUniformLocation("model"), light.transform.getMatrix4());
-        glDrawArrays(GL_TRIANGLES, 0, 36);
+        for (size_t i = 0; i < lightsCount; i++)
+        {
+            lightShader.SetVec3(lightShader.GetUniformLocation("lightColor"), lights[i].diffuseColor);
+            lightShader.SetMat4(lightShader.GetUniformLocation("model"), lights[i].transform.getMatrix4());
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+        }
 
         glBindVertexArray(0);
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+
     glfwTerminate();
 }

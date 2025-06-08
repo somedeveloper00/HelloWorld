@@ -14,6 +14,11 @@ struct Transform
     {
     }
 
+    void lookAt(glm::vec3 point, glm::vec3 up = glm::vec3(0.f, 1.f, 0.f))
+    {
+        rotation = glm::quatLookAt(glm::normalize(point - position), up);
+    }
+
     void rotateAround(glm::vec3 axis, float amount)
     {
         rotation = glm::normalize(rotation * glm::angleAxis(amount, axis));
