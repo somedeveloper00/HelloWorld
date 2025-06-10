@@ -16,6 +16,9 @@
     <Filter Include="Resource Files\shaders">
       <UniqueIdentifier>{c277bc6d-e040-4780-befe-19c3a92ea9c7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files\models">
+      <UniqueIdentifier>{4a9e35f8-032b-4a76-bd7f-0fced9a9798d}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Main.cpp">
@@ -28,6 +31,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Math.hpp">
+      <Filter>Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Model.hpp">
       <Filter>Header Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -61,6 +67,9 @@
     <None Include="lightShader.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="models\monkey.fbx">
+      <Filter>Resource Files\models</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Image Include="container.jpg">
@@ -74,6 +83,9 @@
     </Image>
     <Image Include="container2_specular.png">
       <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="models\diffuse.png">
+      <Filter>Resource Files\models</Filter>
     </Image>
   </ItemGroup>
 </Project>
