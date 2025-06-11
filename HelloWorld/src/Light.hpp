@@ -41,29 +41,36 @@ struct Light
 
 struct alignas(16) LightBufferData
 {
-    glslVec3 position;
-    glslVec3 diffuseColor;
-    glslVec3 specularColor;
-    glslVec3 forward;
-    float cutoff;
-    float outerCutoff;
-    float attenuationConst;
-    float attenuationLinear;
+    float position_and_cutoff[4];
+    float diffuseColor_and_outerCutoff[4];
+    float specularColor_and_attenuationConst[4];
+    float forward_and_attenuationLinear[4];
     float attenuationQuad;
 
-    LightBufferData() {}
-
-    LightBufferData(const Light& light) :
-        position(light.transform.position),
-        diffuseColor(light.diffuseColor),
-        specularColor(light.specularColor),
-        forward(light.transform.getForward()),
-        cutoff(std::cos(glm::radians(light.cutoffAngle))),
-        outerCutoff(std::cos(glm::radians(light.outerCutoffAngle))),
-        attenuationConst(light.attenuationConst),
-        attenuationLinear(light.attenuationLinear),
-        attenuationQuad(light.attenuationQuad)
+    inline void map(const Light& light) noexcept
     {
+        const float cutoff = std::cos(glm::radians(light.cutoffAngle));
+        const float outerCutoff = std::cos(glm::radians(light.outerCutoffAngle));
+        const glm::vec3 forward = light.transform.getForward();
+
+        // hint for SMID
+        position_and_cutoff[0] = light.transform.position.x;
+        position_and_cutoff[1] = light.transform.position.y;
+        position_and_cutoff[2] = light.transform.position.z;
+        position_and_cutoff[3] = cutoff;
+        diffuseColor_and_outerCutoff[0] = light.diffuseColor.x;
+        diffuseColor_and_outerCutoff[1] = light.diffuseColor.y;
+        diffuseColor_and_outerCutoff[2] = light.diffuseColor.z;
+        diffuseColor_and_outerCutoff[3] = outerCutoff;
+        specularColor_and_attenuationConst[0] = light.specularColor.x;
+        specularColor_and_attenuationConst[1] = light.specularColor.y;
+        specularColor_and_attenuationConst[2] = light.specularColor.z;
+        specularColor_and_attenuationConst[3] = light.attenuationConst;
+        forward_and_attenuationLinear[0] = forward.x;
+        forward_and_attenuationLinear[1] = forward.y;
+        forward_and_attenuationLinear[2] = forward.z;
+        forward_and_attenuationLinear[3] = light.attenuationLinear;
+        attenuationQuad = light.attenuationQuad;
     }
 };
 

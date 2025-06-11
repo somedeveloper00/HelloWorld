@@ -18,14 +18,10 @@ struct Material {
 
 // multi-purpose light data
 struct Light {
-    vec3 position;
-    vec3 diffuseColor;
-    vec3 specularColor;
-    vec3 forward;
-    float cutoff; // cos(inner cone angle)
-    float outerCutoff; // cos(outter cone angle)
-    float attenuationConst; // constant attenuation
-    float attenuationLinear; // linear attenuation
+    vec4 position_and_cutoff; // cutoff: cos(inner cone angle)
+    vec4 diffuseColor_and_outerCutoff; //outerCutoff: cos(outter cone angle)
+    vec4 specularColor_and_attenuationConst; // attenuationConst: constant attenuation
+    vec4 forward_and_attenuationLinear; // attenuationLinear: linear attenuation
     float attenuationQuad; // quadratic attenuation
 };
 
@@ -40,30 +36,30 @@ uniform vec3 viewPos;
 vec3 calculateLight(const Light light, const vec3 N, const vec3 V, const vec3 baseDiffuse, const vec3 baseSpecular)
 {
     // light vector and distance                                                                                                   
-    vec3 L = light.position - pos;                                                                                                 
+    vec3 L = light.position_and_cutoff.xyz - pos;                                                                                                 
     float dist = length(L);                                                                                                        
     L = dist > 0.f ? L / dist : vec3(0.f); // normalize L 
 
     // spotlight intensity (affects diffuse and specular)                                                                          
-    float theta = dot(L, normalize(-light.forward));                                                                               
-    float epsilon = light.cutoff - light.outerCutoff;                                                                              
-    float spotIntensity = clamp((theta - light.outerCutoff) / epsilon, 0.0, 1.0);                                                  
-    float attenuation = 1.0 / (light.attenuationConst +                                                                            
-                               light.attenuationLinear * dist +                                                                    
+    float theta = dot(L, normalize(-light.forward_and_attenuationLinear.xyz));                                                                               
+    float epsilon = light.position_and_cutoff.w - light.diffuseColor_and_outerCutoff.w;                                                                              
+    float spotIntensity = clamp((theta - light.diffuseColor_and_outerCutoff.w) / epsilon, 0.0, 1.0);                                                  
+    float attenuation = 1.0 / (light.specularColor_and_attenuationConst.w +                                                                            
+                               light.forward_and_attenuationLinear.w * dist +                                                                    
                                light.attenuationQuad * dist * dist);                                                               
     float radiance = spotIntensity * attenuation;  
                                                                                                                                
-    if (radiance < 1e-4)                                                                                                           
-        return vec3(0.0);                                                                                                          
+    if (radiance < 1e-4)
+        return vec3(0.0);                                                                                                      
                                                                                                                                
     // diffuse term                                                                                                                
     float NdotL = max(0, dot(N, L));                                                                                               
-    vec3 diffuse = (radiance * light.diffuseColor) * (NdotL * baseDiffuse);                                                        
+    vec3 diffuse = (radiance * light.diffuseColor_and_outerCutoff.rgb) * (NdotL * baseDiffuse);                                                        
                                                                                                                                
     // specular term (Blinn-Phong)                                                                                                 
     vec3 H = normalize(L + V);                                                                                                     
     float NdotH = max(dot(N, H), 0.0);                                                                                             
-    vec3 specular = radiance * light.specularColor * pow(NdotH, material.shininess) * baseSpecular;                                
+    vec3 specular = radiance * light.specularColor_and_attenuationConst.rgb * pow(NdotH, material.shininess) * baseSpecular;                                
                                                                                                                                
     return diffuse + specular;                                                                                                     
 }

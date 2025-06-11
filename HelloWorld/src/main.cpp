@@ -155,12 +155,7 @@ int main()
             lights[i].cutoffAngle = lerp(10, 50, sin(lastFrameTime) / 2.f + 0.5f);
             lights[i].outerCutoffAngle = lights[i].cutoffAngle + lerp(1, 45, sin(lastFrameTime * 2) / 2.f + 0.5f);
             lights[i].transform.position.z = sin(lastFrameTime * 2) * 2;
-            //lights[i].transform.lookAt(monkeyTransform.position);
-
-            //            lights[0].transform.position = glm::vec3(0.f, 2.f, 2.f);
-            //            lights[0].cutoffAngle = 90.f;
-            //            lights[0].outerCutoffAngle = 90.f;
-            lightBlock.lights[i] = lights[i];
+            lightBlock.lights[i].map(lights[i]);
         }
         lightBlock.lightsCount = lightsCount;
 
