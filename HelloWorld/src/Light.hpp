@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Transform.hpp"
-#include "../GlslTypes.cpp"
+#include "GlslTypes.cpp"
 struct Light
 {
     Transform transform;
