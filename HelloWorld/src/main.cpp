@@ -15,6 +15,8 @@
 #include "Light.hpp"
 #include "Math.hpp"
 #include "Model.hpp"
+#include "ecs.hpp"
+#include "variadicUtils.hpp"
 
 float deltaTime;
 bool firstMouse = true;
@@ -71,8 +73,42 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     camera.fov -= yoffset * sensitivity;
 }
 
+
 int main()
 {
+    World world{};
+    world.add(glm::vec3(1.5f, 1.5f, 2.5f), glm::vec2(2.7f, 3.7f));
+    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
+    world.add(glm::vec2(22.7f, 3.7f), glm::vec3(11.5f, 1.5f, 2.5f));
+    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
+    world.add(glm::vec2(222.7f, 3.7f), glm::vec3(111.5f, 1.5f, 2.5f));
+    world.remove<glm::vec3, glm::vec2>(0);
+    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
+    world.add(glm::vec2(2222.7f, 3.7f), glm::vec3(1111.5f, 1.5f, 2.5f));
+    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
+    world.add(glm::vec2(22222.7f, 3.7f), glm::vec3(11111.5f, 1.5f, 2.5f));
+    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
+    auto& archetype = world.getArchetype<glm::vec3, glm::vec2>();
+    auto& vec3 = archetype.get<glm::vec3>(0);
+    auto& vec2 = archetype.get<glm::vec2>(0);
+    std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << "\n";
+    std::cout << "vec2: " << vec2.x << " " << vec2.y << "\n";
+    world.remove<glm::vec3, glm::vec2>(0);
+    world.remove<glm::vec3, glm::vec2>(0);
+    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
+
+    world.execute([](glm::vec3& vec3, glm::vec2 vec2)
+        {
+            std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
+            vec3.x = -1;
+        });
+    world.execute([](glm::vec2 vec2, glm::vec3 vec3)
+        {
+            std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
+        });
+
+    return 0;
+
     // configure stbi
     stbi_set_flip_vertically_on_load(true);
 
@@ -142,7 +178,7 @@ int main()
         deltaTime = glfwGetTime() - lastFrameTime;
         lastFrameTime = glfwGetTime();
 
-        //sstd::cout << "frame-time:" << deltaTime << " fps:" << (int)(1 / deltaTime) << "\n";
+        //std::cout << "frame-time:" << deltaTime << " fps:" << (int)(1 / deltaTime) << "\n";
 
         processInput(window);
 
