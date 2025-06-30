@@ -6,6 +6,7 @@
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 
 namespace ecs
 {
@@ -23,7 +24,7 @@ namespace ecs
 
         _QuickMap(const size_t sizeA)
         {
-            // find the appropriate power-of-2 capacity for the size
+            // find the appropriate power-of-2 capacity for the size (used later for finding hash-key indices)
             size_t n = 1;
             while (n < sizeA)
                 n *= 2;
@@ -32,6 +33,8 @@ namespace ecs
         }
         ~_QuickMap()
         {
+            for (size_t i = 0; i < size; i++)
+                _entries[i].value.~T();
             delete[] _entries;
         }
 
@@ -41,10 +44,9 @@ namespace ecs
         T& get(const size_t key)
         {
             const size_t mask = size - 1; // faster than divisor
-            size_t idx = key & size;
+            size_t idx = key & mask;
             for (size_t i = 0; i < size; i++)
             {
-                idx = (idx + 1) & mask; // increment but don't over-increment
                 if (!_entries[idx].occupied)
                 {
                     std::cerr << "key not found" << std::endl;
@@ -52,6 +54,7 @@ namespace ecs
                 }
                 if (_entries[idx].key == key)
                     return _entries[idx].value;
+                idx = (idx + 1) & mask; // increment but don't over-increment
             }
             std::cerr << "key not found" << std::endl;
             return _entries[0].value;
@@ -60,10 +63,9 @@ namespace ecs
         void set(size_t key, const T& value)
         {
             const size_t mask = size - 1;
-            size_t idx = key & size;
+            size_t idx = key & mask;
             for (size_t i = 0; i < size; i++)
             {
-                idx = (idx + 1) & mask;
                 if (_entries[idx].occupied)
                 {
                     if (_entries[idx].key == key)
@@ -79,6 +81,7 @@ namespace ecs
                     _entries[idx].value = value;
                     return;
                 }
+                idx = (idx + 1) & mask;
             }
             std::cerr << "no empty place found" << std::endl;
         }
@@ -86,12 +89,12 @@ namespace ecs
         size_t getIndex(size_t key)
         {
             const size_t mask = size - 1;
-            size_t idx = key & size;
+            size_t idx = key & mask;
             for (size_t i = 0; i < size; i++)
             {
-                idx = (idx + 1) & mask;
                 if (_entries[idx].occupied & (_entries[idx].key == key))
                     return idx;
+                idx = (idx + 1) & mask;
             }
             return -1;
         }
@@ -149,6 +152,12 @@ namespace ecs
 
             T* ptr = (T*)componentsBuffer.data();
             ptr[index] = value;
+        }
+
+        template<typename T>
+        T* getBuffer()
+        {
+            return (T*)componentsBuffer.data();
         }
 
     private:
@@ -215,6 +224,14 @@ namespace ecs
             return componentType.get<T>(index);
         }
 
+        template<typename T>
+        T* getArray()
+        {
+            constexpr auto hash = getTypeHash<T>();
+            auto& componentType = _componentTypes.get(hash);
+            return componentType.getBuffer<T>();
+        }
+
         size_t getCount() const { return _count; }
 
         bool hasComponents(const std::vector<size_t>& componentHashes)
@@ -230,16 +247,6 @@ namespace ecs
                         break;
                     ind++;
                 }
-            return true;
-        }
-
-        bool hasExactComponents(const std::vector<size_t>& componentHashes)
-        {
-            if (componentHashes.size() != componentHashes.size())
-                return false;
-            for (size_t i = 0; i < componentHashes.size(); i++)
-                if (componentHashes[i] != componentHashes[i])
-                    return false;
             return true;
         }
 
@@ -300,9 +307,21 @@ namespace ecs
             constexpr auto argsCount = traits::argsCount;
             using firstType = traits::template arg<0>;
             if constexpr (std::is_same_v<firstType, Entity>)
-                _executeWithEntity(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
+                _executeWithEntity<false>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
             else
-                _execute(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
+                _execute<false>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
+        }
+
+        template<typename Func>
+        void executeParallel(Func&& func)
+        {
+            using traits = FunctionTraits<std::decay_t<Func>>;
+            constexpr auto argsCount = traits::argsCount;
+            using firstType = traits::template arg<0>;
+            if constexpr (std::is_same_v<firstType, Entity>)
+                _executeWithEntity<true>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
+            else
+                _execute<true>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
         }
 
         template<typename...Ts>
@@ -311,7 +330,7 @@ namespace ecs
             return findOrCreateExactArchetype<Ts...>();
         }
 
-        int archetypesCount() const { return exact_archetypes.size(); }
+        size_t archetypesCount() const { return exact_archetypes.size(); }
 
         size_t totalEntityCount() const
         {
@@ -327,29 +346,72 @@ namespace ecs
         std::unordered_map<size_t, std::vector<Archetype*>> contain_archetypes{};
         std::unordered_map<size_t, Archetype*> exact_archetypes;
 
-        template<typename Func, size_t... Indices>
+        template<bool Parallel, typename Func, size_t... Indices>
         void _execute(Func&& func, std::index_sequence<Indices...>)
         {
             using traits = FunctionTraits<std::decay_t<Func>>;
             using args = typename traits::args;
             auto& archetypes = findMatchingArchetypes<std::decay_t<typename traits::template arg<Indices>>...>();
             for (size_t i = 0; i < archetypes.size(); i++)
-                for (size_t j = 0; j < archetypes[i]->getCount(); j++)
-                    std::invoke(std::forward<Func>(func), archetypes[i]->get<std::decay_t<typename traits::template arg<Indices>>>(j)...);
+            {
+                auto& archetype = archetypes[i];
+                // get internal component arrays
+                void* ptrs[getVariadicCount<Indices...>()]{ (void*)archetype->getArray<std::decay_t<typename traits::template arg<Indices>>>()... };
+
+                if constexpr (Parallel)
+#pragma omp parallel for
+                    for (signed long long j = 0; j < archetype->getCount(); j++)
+                        std::invoke(
+                            std::forward<Func>(func),
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
+                        );
+                else
+                    for (size_t j = 0; j < archetype->getCount(); j++)
+                        std::invoke(
+                            std::forward<Func>(func),
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
+                        );
+            }
         }
 
-        template<typename Func, size_t... Indices>
+        template<bool Parallel, typename Func, size_t... Indices>
         void _executeWithEntity(Func&& func, std::index_sequence<Indices...>)
         {
             using traits = FunctionTraits<std::decay_t<Func>>;
             using args = typename traits::args;
             auto& archetypes = findMatchingArchetypes<std::decay_t<typename traits::template arg<Indices + 1>>...>();
             for (size_t i = 0; i < archetypes.size(); i++)
-                for (size_t j = 0; j < archetypes[i]->getCount(); j++)
-                {
-                    Entity entity(archetypes[i]->archetypeHash, j);
-                    std::invoke(std::forward<Func>(func), entity, archetypes[i]->get<std::decay_t<typename traits::template arg<Indices + 1>>>(j)...);
-                }
+            {
+                auto& archetype = archetypes[i];
+                // get internal component arrays
+                void* ptrs[getVariadicCount<Indices...>()]{ (void*)archetype->getArray<std::decay_t<typename traits::template arg<Indices + 1>>>()... };
+
+                if constexpr (Parallel)
+#pragma omp parallel for
+                    for (signed long long j = 0; j < archetype->getCount(); j++)
+                    {
+                        Entity entity(archetype->archetypeHash, j);
+                        std::invoke(
+                            std::forward<Func>(func),
+                            entity,
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices + 1>>*)ptrs[Indices])[j]...
+                        );
+                    }
+                else
+                    for (size_t j = 0; j < archetype->getCount(); j++)
+                    {
+                        Entity entity(archetype->archetypeHash, j);
+                        std::invoke(
+                            std::forward<Func>(func),
+                            entity,
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices + 1>>*)ptrs[Indices])[j]...
+                        );
+                    }
+            }
         }
 
         template<typename... Ts>

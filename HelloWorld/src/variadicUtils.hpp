@@ -10,10 +10,10 @@ template<size_t N, typename... Ts>
 using TypeAt = TypeAtHelper<N, Ts...>::type;
 
 template<typename...Ts>
-consteval size_t getVariadicCount()
-{
-    return sizeof...(Ts);
-}
+consteval size_t getVariadicCount() { return sizeof...(Ts); }
+
+template<size_t...Ts>
+consteval size_t getVariadicCount() { return sizeof...(Ts); }
 
 template<typename F>
 struct FunctionTraits;

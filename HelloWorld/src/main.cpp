@@ -74,41 +74,49 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     camera.fov -= yoffset * sensitivity;
 }
 
+constexpr size_t iter = 10;
 constexpr size_t count = 1000000;
 glm::vec3 vec3s[count];
 glm::vec2 vec2s[count];
+size_t r[count];
 ecs::World world{};
 
-void raw()
+static void raw()
 {
-    for (size_t c = 0; c < 100; c++)
+    for (size_t c = 0; c < iter; c++)
     {
         {
             Benchmark benchmark("raw");
-            float total = 0;
             for (size_t i = 0; i < count; i++)
             {
-                total += vec3s[i].x * vec3s[i].y + vec3s[i].z;
-                total += vec2s[i].x * vec2s[i].y;
+                r[i] = vec3s[i].x / 1000 + vec3s[i].y / 1000 + vec3s[i].z / 1000;
+                r[i] -= vec2s[i].x / 1000 - vec2s[i].y / 1000;
             }
-            std::cout << "total: " << total << "\n";
         }
+        size_t total = 0;
+        for (size_t i = 0; i < count; i++)
+            total += r[i];
+        std::cout << "total: " << total << "\n";
     }
 }
-void test2()
+static void test2()
 {
-    for (size_t c = 0; c < 100; c++)
+    for (size_t c = 0; c < iter; c++)
     {
         {
             Benchmark benchmark("ecs");
-            float total = 0;
-            world.execute([&total](glm::vec3 vec3, glm::vec2 vec2)
+            world.executeParallel([](glm::vec3 vec3, glm::vec2 vec2, size_t& rv)
                 {
-                    total += vec3.x * vec3.y + vec3.z;
-                    total += vec2.x * vec2.y;
+                    rv = vec3.x / 1000 + vec3.y / 1000 + vec3.z / 1000;
+                    rv -= vec2.x / 1000 - vec2.y / 1000;
                 });
-            std::cout << "total: " << total << "\n";
         }
+        size_t total = 0;
+        world.execute([&total](glm::vec3, glm::vec2, size_t rv)
+            {
+                total += rv;
+            });
+        std::cout << "total: " << total << "\n";
     }
 }
 int main()
@@ -117,11 +125,11 @@ int main()
     {
         vec3s[i] = { rand(), rand(), rand() };
         vec2s[i] = { rand(), rand() };
-        world.add(vec3s[i], vec2s[i]);
+        world.add(vec3s[i], vec2s[i], size_t(0));
     }
     raw();
     test2();
-    return 0;
+
     ecs::World world{};
     world.add(12, 'c');
     world.add(glm::vec3(1.5f, 1.5f, 2.5f), glm::vec2(2.7f, 3.7f));
@@ -140,9 +148,11 @@ int main()
     std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << "\n";
     std::cout << "vec2: " << vec2.x << " " << vec2.y << "\n";
 
-    world.execute([](glm::vec3& vec3, glm::vec2 vec2)
+    world.executeParallel([](glm::vec3& vec3, glm::vec2 vec2)
         {
-            std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
+            std::stringstream msg;
+            msg << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
+            std::cout << msg.str();
             vec3.x = -1;
         });
     world.execute([](ecs::Entity entity, glm::vec2 vec2, glm::vec3 vec3)
