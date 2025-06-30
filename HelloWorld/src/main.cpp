@@ -17,6 +17,7 @@
 #include "Model.hpp"
 #include "ecs.hpp"
 #include "variadicUtils.hpp"
+#include "benchmark.cpp"
 
 float deltaTime;
 bool firstMouse = true;
@@ -73,9 +74,55 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     camera.fov -= yoffset * sensitivity;
 }
 
+constexpr size_t count = 1000000;
+glm::vec3 vec3s[count];
+glm::vec2 vec2s[count];
+ecs::World world{};
+
+void raw()
+{
+    for (size_t c = 0; c < 100; c++)
+    {
+        {
+            Benchmark benchmark("raw");
+            float total = 0;
+            for (size_t i = 0; i < count; i++)
+            {
+                total += vec3s[i].x * vec3s[i].y + vec3s[i].z;
+                total += vec2s[i].x * vec2s[i].y;
+            }
+            std::cout << "total: " << total << "\n";
+        }
+    }
+}
+void test2()
+{
+    for (size_t c = 0; c < 100; c++)
+    {
+        {
+            Benchmark benchmark("ecs");
+            float total = 0;
+            world.execute([&total](glm::vec3 vec3, glm::vec2 vec2)
+                {
+                    total += vec3.x * vec3.y + vec3.z;
+                    total += vec2.x * vec2.y;
+                });
+            std::cout << "total: " << total << "\n";
+        }
+    }
+}
 int main()
 {
-    World world{};
+    for (size_t i = 0; i < count; i++)
+    {
+        vec3s[i] = { rand(), rand(), rand() };
+        vec2s[i] = { rand(), rand() };
+        world.add(vec3s[i], vec2s[i]);
+    }
+    raw();
+    test2();
+    return 0;
+    ecs::World world{};
     world.add(12, 'c');
     world.add(glm::vec3(1.5f, 1.5f, 2.5f), glm::vec2(2.7f, 3.7f));
     world.add(glm::vec2(22.7f, 3.7f), glm::vec3(11.5f, 1.5f, 2.5f));
@@ -98,9 +145,9 @@ int main()
             std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
             vec3.x = -1;
         });
-    world.execute([](glm::vec2 vec2, glm::vec3 vec3)
+    world.execute([](ecs::Entity entity, glm::vec2 vec2, glm::vec3 vec3)
         {
-            std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
+            std::cout << "archetype: " << entity.archetypeHash << " rowId: " << entity.rowId << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
         });
     world.execute([](int i)
         {
@@ -109,6 +156,10 @@ int main()
     world.execute([](glm::vec3 v)
         {
             std::cout << "vec3: " << v.x << " " << v.y << " " << v.z << "\n";
+        });
+    world.execute([](ecs::Entity entity, glm::vec3 v)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowId: " << entity.rowId << " vec3: " << v.x << " " << v.y << " " << v.z << "\n";
         });
 
     return 0;

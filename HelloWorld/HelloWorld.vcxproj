@@ -11,6 +11,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\benchmark.cpp" />
     <ClCompile Include="src\glad.c" />
     <ClCompile Include="src\GlslTypes.cpp" />
     <ClCompile Include="src\main.cpp" />

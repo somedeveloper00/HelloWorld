@@ -23,6 +23,9 @@
     <ClCompile Include="src\stbi_image.cpp">
       <Filter>Sources</Filter>
     </ClCompile>
+    <ClCompile Include="src\benchmark.cpp">
+      <Filter>Sources</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Camera.hpp">
