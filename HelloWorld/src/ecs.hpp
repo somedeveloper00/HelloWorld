@@ -9,22 +9,28 @@
 
 struct ComponentType
 {
-    std::vector<std::byte> components{};
+    std::vector<std::byte> componentsBuffer{};
     size_t size;
 };
 
 struct Archetype
 {
     const size_t componentCount;
+    const size_t id = s_lastId++;
 
-    Archetype(const std::vector<size_t>& componentHashes, const std::vector<size_t>& componentSizes) :
-        componentCount(componentHashes.size()),
-        _componentHashes(componentHashes),
-        _componentTypes(componentCount)
+    template<typename... Ts>
+    inline static Archetype* create()
     {
-        std::cout << "new archetype created\n";
-        for (size_t i = 0; i < componentCount; i++)
-            _componentTypes[componentHashes[i]].size = componentSizes[i];
+        constexpr size_t count = getVariadicCount<Ts...>();
+        constexpr std::array<size_t, count> hashes = createSortedHashes<Ts...>();
+        constexpr std::array<size_t, count> sizes = createSortedSizes<Ts...>();
+        Archetype* archetype = new Archetype(
+            count,
+            std::vector<size_t>(hashes.begin(), hashes.end()));
+        archetype->_componentTypes.reserve(count);
+        for (size_t i = 0; i < count; i++)
+            archetype->_componentTypes[hashes[i]].size = sizes[i];
+        return archetype;
     }
 
     // add and return index of component (size_t: component hash)
@@ -32,7 +38,7 @@ struct Archetype
     template<typename... Ts>
     size_t add(Ts... components)
     {
-        (_addComponent(components), ...);
+        (..., _addComponent(components));
         return _count++;
     }
 
@@ -41,13 +47,13 @@ struct Archetype
         for (auto& it : _componentTypes)
         {
             auto& componentType = it.second;
-            void* ptr = componentType.components.data();
+            void* ptr = componentType.componentsBuffer.data();
             void* target = (void*)((size_t)ptr + componentType.size * index);
             void* end = (void*)((size_t)ptr + componentType.size * _count);
             void* source = (void*)(std::max((size_t)end - componentType.size * count, (size_t)target + componentType.size * count));
             size_t length = (size_t)ptr + (_count * componentType.size) - (size_t)source;
             memcpy((void*)target, (void*)source, length);
-            componentType.components.resize(componentType.size * (_count - count));
+            componentType.componentsBuffer.resize(componentType.size * (_count - count));
         }
         return _count -= count;
     }
@@ -56,7 +62,7 @@ struct Archetype
     T& get(size_t index)
     {
         auto& componentType = _componentTypes[getTypeHash<T>()];
-        auto* ptr = componentType.components.data();
+        auto* ptr = componentType.componentsBuffer.data();
         T* castedPtr = (T*)ptr;
         return castedPtr[index];
     }
@@ -93,15 +99,22 @@ private:
     std::unordered_map<size_t, ComponentType> _componentTypes;
     const std::vector<size_t> _componentHashes;
     size_t _count = 0;
+    inline static size_t s_lastId = 1;
 
+    Archetype(size_t componentCount, const std::vector<size_t>& componentHashes)
+        : componentCount(componentCount), _componentHashes(componentHashes)
+    {
+    }
+
+    // assumes caller is executing this when adding a new row
     template<typename T>
     void _addComponent(const T component)
     {
-        const auto hash = getTypeHash<T>();
+        constexpr auto hash = getTypeHash<T>();
         constexpr auto size = sizeof(T);
         auto& componentType = _componentTypes[hash];
-        componentType.components.resize(componentType.size * (_count + 1));
-        auto dest = (T*)componentType.components.data();
+        componentType.componentsBuffer.resize(size * (_count + 1));
+        auto dest = (T*)componentType.componentsBuffer.data();
         dest[_count] = component;
     }
 };
@@ -110,25 +123,21 @@ struct World
 {
     ~World()
     {
-        for (auto& archetype : archetypes)
-            delete archetype;
+        for (auto& it : exact_archetypes)
+            delete it.second;
     }
 
     template<typename...Ts>
     void add(Ts... components)
     {
-        auto sizes = createSortedSizes<Ts...>();
-        auto hashes = createSortedHashes<Ts...>();
-        auto& archetype = findOrCreateExactArchetype(hashes, sizes);
+        auto& archetype = findOrCreateExactArchetype<Ts...>();
         archetype.add(components...);
     }
 
     template<typename... Ts>
     void remove(size_t rowId, size_t count = 1)
     {
-        auto hashes = createSortedHashes<Ts...>();
-        auto sizes = createSortedSizes<Ts...>();
-        auto& archetype = findOrCreateExactArchetype(hashes, sizes);
+        auto& archetype = findOrCreateExactArchetype<Ts...>();
         archetype.remove(rowId, count);
     }
 
@@ -143,55 +152,70 @@ struct World
     template<typename...Ts>
     Archetype& getArchetype()
     {
-        auto hashes = createSortedHashes<Ts...>();
-        auto sizes = createSortedSizes<Ts...>();
-        auto& archetype = findOrCreateExactArchetype(hashes, sizes);
-        return archetype;
+        return findOrCreateExactArchetype<Ts...>();
     }
 
-    int archetypesCount() const { return archetypes.size(); }
+    int archetypesCount() const { return exact_archetypes.size(); }
 
     size_t totalEntityCount() const
     {
         size_t r = 0;
-        for (auto archetype : archetypes)
-            r += archetype->getCount();
+        for (auto& archetype : exact_archetypes)
+            r += archetype.second->getCount();
         return r;
     }
 
 private:
-    // key: createSortedHash<...>
-    std::vector<Archetype*> archetypes{};
+    // key: createSortedHash<Ts...>
+    // if a key is createSortedHash<int,float>(), it will contain pointer to all archetypes having the two components `int` and `float`
+    std::unordered_map<size_t, std::vector<Archetype*>> contain_archetypes{};
+    std::unordered_map<size_t, Archetype*> exact_archetypes;
 
     template<typename Func, size_t... Indices>
     void _execute(Func&& func, std::index_sequence<Indices...>)
     {
         using traits = FunctionTraits<std::decay_t<Func>>;
         using args = typename traits::args;
-        auto hashes = createSortedHashes<std::decay_t<typename traits::template arg<Indices>>...>();
-        auto archetypes = findMatchingArchetypes(hashes);
+        auto& archetypes = findMatchingArchetypes<std::decay_t<typename traits::template arg<Indices>>...>();
         for (size_t i = 0; i < archetypes.size(); i++)
             for (size_t j = 0; j < archetypes[i]->getCount(); j++)
                 std::invoke(std::forward<Func>(func), archetypes[i]->get<std::decay_t<typename traits::template arg<Indices>>>(j)...);
     }
 
-    Archetype& findOrCreateExactArchetype(const std::vector<size_t>& typeHashes, const std::vector<size_t>& sizes)
+    template<typename... Ts>
+    Archetype& findOrCreateExactArchetype()
     {
-        for (size_t i = 0; i < archetypes.size(); i++)
-            if (archetypes[i]->hasExactComponents(typeHashes))
-                return *archetypes[i];
+        constexpr size_t hash = createSortedHash<Ts...>();
+        auto it = exact_archetypes.find(hash);
+        if (it != exact_archetypes.end())
+            return *it->second;
+
         // create new
-        auto* archetype = new Archetype(typeHashes, sizes);
-        archetypes.push_back(archetype);
+        Archetype* archetype = Archetype::create<Ts...>();
+        exact_archetypes[hash] = archetype;
+        std::cout << "new archetype created for ";
+        (..., (std::cout << typeid(Ts).name() << ", "));
+        std::cout << "\n";
+        addArchetypeToIncludesListRecursively<Ts...>(archetype);
         return *archetype;
     }
 
-    std::vector<Archetype*> findMatchingArchetypes(const std::vector<size_t> typeHashes)
+    template<typename... Ts>
+    void addArchetypeToIncludesListRecursively(Archetype* archetype)
     {
-        std::vector<Archetype*> results{};
-        for (size_t i = 0; i < archetypes.size(); i++)
-            if (archetypes[i]->hasComponents(typeHashes))
-                results.push_back(archetypes[i]);
-        return results;
+        constexpr auto hashes = createSortedHashes<Ts...>();
+        constexpr auto includeHashes = createHashForAllCombinationsOfHashes(hashes);
+        for (auto& hash : includeHashes)
+        {
+            contain_archetypes[hash].push_back(archetype);
+            std::cout << "adding to hash of " << hash << "\n";
+        }
+    }
+
+    template<typename... Ts>
+    std::vector<Archetype*>& findMatchingArchetypes()
+    {
+        constexpr size_t hash = createSortedHash<Ts...>();
+        return contain_archetypes[hash];
     }
 };
