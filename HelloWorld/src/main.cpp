@@ -74,79 +74,121 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     camera.fov -= yoffset * sensitivity;
 }
 
-constexpr size_t iter = 10;
-constexpr size_t count = 1000000;
+constexpr size_t iter = 5;
+constexpr size_t count = 10000;
 glm::vec3 vec3s[count];
 glm::vec2 vec2s[count];
 size_t r[count];
 ecs::World world{};
 
-static void raw()
+static void rawParallel()
 {
     for (size_t c = 0; c < iter; c++)
     {
+        size_t total = 0;
         {
-            Benchmark benchmark("raw");
-            for (size_t i = 0; i < count; i++)
+            Benchmark benchmark("raw parallel");
+#pragma omp parallel for
+            for (signed long long i = 0; i < count; i++)
             {
                 r[i] = vec3s[i].x / 1000 + vec3s[i].y / 1000 + vec3s[i].z / 1000;
                 r[i] -= vec2s[i].x / 1000 - vec2s[i].y / 1000;
             }
+            for (size_t i = 0; i < count; i++)
+                total += r[i];
         }
-        size_t total = 0;
-        for (size_t i = 0; i < count; i++)
-            total += r[i];
         std::cout << "total: " << total << "\n";
     }
 }
-static void test2()
+
+static void test2Parallel()
 {
     for (size_t c = 0; c < iter; c++)
     {
+        size_t total = 0;
         {
-            Benchmark benchmark("ecs");
+            Benchmark benchmark("ecs parallel");
             world.executeParallel([](glm::vec3 vec3, glm::vec2 vec2, size_t& rv)
                 {
                     rv = vec3.x / 1000 + vec3.y / 1000 + vec3.z / 1000;
                     rv -= vec2.x / 1000 - vec2.y / 1000;
                 });
+            world.execute([&total](glm::vec3, glm::vec2, size_t rv)
+                {
+                    total += rv;
+                });
         }
-        size_t total = 0;
-        world.execute([&total](glm::vec3, glm::vec2, size_t rv)
-            {
-                total += rv;
-            });
         std::cout << "total: " << total << "\n";
     }
 }
+
+static void raw()
+{
+    for (size_t c = 0; c < iter; c++)
+    {
+        size_t total = 0;
+        {
+            Benchmark benchmark("raw");
+            for (signed long long i = 0; i < count; i++)
+            {
+                total += vec3s[i].x / 1000 + vec3s[i].y / 1000 + vec3s[i].z / 1000;
+                total -= vec2s[i].x / 1000 - vec2s[i].y / 1000;
+            }
+        }
+        std::cout << "total: " << total << "\n";
+    }
+}
+
+static void test2()
+{
+    for (size_t c = 0; c < iter; c++)
+    {
+        size_t total = 0;
+        {
+            Benchmark benchmark("ecs");
+            world.execute([&total](glm::vec3 vec3, glm::vec2 vec2)
+                {
+                    total += vec3.x / 1000 + vec3.y / 1000 + vec3.z / 1000;
+                    total -= vec2.x / 1000 - vec2.y / 1000;
+                });
+        }
+        std::cout << "total: " << total << "\n";
+    }
+}
+
 int main()
 {
     for (size_t i = 0; i < count; i++)
     {
         vec3s[i] = { rand(), rand(), rand() };
         vec2s[i] = { rand(), rand() };
-        world.add(vec3s[i], vec2s[i], size_t(0));
+        world.addEntity(vec3s[i], vec2s[i], size_t(0));
     }
     raw();
     test2();
+    rawParallel();
+    test2Parallel();
 
     ecs::World world{};
-    world.add(12, 'c');
-    world.add(glm::vec3(1.5f, 1.5f, 2.5f), glm::vec2(2.7f, 3.7f));
-    world.add(glm::vec2(22.7f, 3.7f), glm::vec3(11.5f, 1.5f, 2.5f));
-    world.add(glm::vec2(222.7f, 3.7f), glm::vec3(111.5f, 1.5f, 2.5f));
-    world.add(glm::vec2(2222.7f, 3.7f), glm::vec3(1111.5f, 1.5f, 2.5f));
-    world.add(glm::vec2(22222.7f, 3.7f), glm::vec3(11111.5f, 1.5f, 2.5f), 14);
-    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
-    world.remove<glm::vec3, glm::vec2>(0);
-    world.remove<glm::vec2, glm::vec3>(0);
-    std::cout << "count: " << world.totalEntityCount() << " archetypes: " << world.archetypesCount() << "\n";
-
-    auto& archetype = world.getArchetype<glm::vec3, glm::vec2>();
-    auto& vec3 = archetype.get<glm::vec3>(0);
-    auto& vec2 = archetype.get<glm::vec2>(0);
-    std::cout << "vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << "\n";
-    std::cout << "vec2: " << vec2.x << " " << vec2.y << "\n";
+    auto entity1 = world.addEntity(12, 'c');
+    auto entity2 = world.addEntity(glm::vec3(1.5f, 1.5f, 2.5f), glm::vec2(2.7f, 3.7f));
+    auto entity3 = world.addEntity(glm::vec2(22.7f, 3.7f), glm::vec3(11.5f, 1.5f, 2.5f));
+    auto entity4 = world.addEntity(glm::vec2(222.7f, 3.7f), glm::vec3(111.5f, 1.5f, 2.5f));
+    auto entity5 = world.addEntity(glm::vec2(2222.7f, 3.7f), glm::vec3(1111.5f, 1.5f, 2.5f));
+    auto entity6 = world.addEntity(glm::vec2(22222.7f, 3.7f), glm::vec3(11111.5f, 1.5f, 2.5f), 14);
+    std::cout << "count: " << world.getTotalEntityCount() << " archetypes: " << world.getTotalArchetypesCount() << "\n";
+    auto& vec3 = world.getComponent<glm::vec3>(entity2);
+    auto& vec2 = world.getComponent<glm::vec2>(entity2);
+    std::cout << "vec2: " << vec2.x << " " << vec2.y << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << "\n";
+    vec3.y = 99;
+    vec3 = world.getComponent<glm::vec3>(entity2);
+    vec2 = world.getComponent<glm::vec2>(entity2);
+    std::cout << "vec2: " << vec2.x << " " << vec2.y << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << "\n";
+    world.markEntityForRemoval(entity3);
+    world.markEntityForRemoval(entity2);
+    //world.markEntityForRemoval(entity6);
+    world.flushMarks();
+    std::cout << "count: " << world.getTotalEntityCount() << " archetypes: " << world.getTotalArchetypesCount() << "\n";
 
     world.executeParallel([](glm::vec3& vec3, glm::vec2 vec2)
         {
@@ -157,7 +199,7 @@ int main()
         });
     world.execute([](ecs::Entity entity, glm::vec2 vec2, glm::vec3 vec3)
         {
-            std::cout << "archetype: " << entity.archetypeHash << " rowId: " << entity.rowId << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
         });
     world.execute([](int i)
         {
@@ -169,7 +211,7 @@ int main()
         });
     world.execute([](ecs::Entity entity, glm::vec3 v)
         {
-            std::cout << "archetype: " << entity.archetypeHash << " rowId: " << entity.rowId << " vec3: " << v.x << " " << v.y << " " << v.z << "\n";
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " vec3: " << v.x << " " << v.y << " " << v.z << "\n";
         });
 
     return 0;

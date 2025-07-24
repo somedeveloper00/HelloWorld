@@ -12,7 +12,7 @@ struct Benchmark
     {
         auto now = std::chrono::high_resolution_clock::now();
         auto ellapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - _startTime).count();
-        std::cout << "[benchmark] >" << label << " ellapsed(ms): " << (double)ellapsed / 1000000 << std::endl;
+        std::cout << "[benchmark] >" << " ellapsed(ms): " << ((double)ellapsed / 1000000) << "\t\"" << label << "\"" << std::endl;
     }
 
 private:

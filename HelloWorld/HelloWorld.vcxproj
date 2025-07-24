@@ -27,7 +27,6 @@
     <ClInclude Include="src\Shader.hpp" />
     <ClInclude Include="src\stb_image.hpp" />
     <ClInclude Include="src\Transform.hpp" />
-    <ClInclude Include="src\variadicUtils.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

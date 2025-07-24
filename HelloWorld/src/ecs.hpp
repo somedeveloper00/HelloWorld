@@ -1,454 +1,516 @@
 #pragma once
-#include "variadicUtils.hpp"
-#include <functional>
-#include <iostream>
-#include <tuple>
-#include <typeindex>
 #include <unordered_map>
-#include <vector>
-#include <thread>
+#include <stdlib.h>
+#include <span>
 
 namespace ecs
 {
-    template<typename T>
-    struct _QuickMap
+    // function traits
+    namespace
     {
-        size_t size; // size of _entries
+        template<typename F>
+        struct FunctionTraits;
 
-        struct Entry
+        // free/function pointer
+        template<typename R, typename... Args>
+        struct FunctionTraits<R(*)(Args...)>
         {
-            size_t key = 0;
-            T value{};
-            bool occupied = false;
+            using returnType = R;
+
+            static constexpr size_t argsCount = sizeof...(Args);
+
+            template<size_t N>
+            using arg = std::tuple_element_t<N, std::tuple<Args...>>;
+
+            using args = std::tuple<Args...>;
         };
 
-        _QuickMap(const size_t sizeA)
+        // functor/lambda 
+        template<typename F>
+        struct FunctionTraits
         {
-            // find the appropriate power-of-2 capacity for the size (used later for finding hash-key indices)
-            size_t n = 1;
-            while (n < sizeA)
-                n *= 2;
-            size = n;
-            _entries = new Entry[size];
-        }
-        ~_QuickMap()
-        {
-            for (size_t i = 0; i < size; i++)
-                _entries[i].value.~T();
-            delete[] _entries;
-        }
+            // underlying function traits
+            using _underlyingFunctionTraits = FunctionTraits<decltype(&F::operator())>;
 
-        T& getFromIndex(const size_t index) { return _entries[index].value; }
-        void setFromIndex(const size_t index, const T value) { _entries[index].value = value; }
+            using returnType = _underlyingFunctionTraits::returnType;
 
-        T& get(const size_t key)
+            static constexpr size_t argsCount = _underlyingFunctionTraits::argsCount;
+
+            template<size_t N>
+            using arg = _underlyingFunctionTraits::template arg<N>;
+
+            using args = _underlyingFunctionTraits::args;
+        };
+
+        // member function pointer
+        template<typename C, typename R, typename... Args>
+        struct FunctionTraits<R(C::*)(Args...)> : FunctionTraits<R(*)(Args...)> {};
+
+        // const member function pointer
+        template<typename C, typename R, typename... Args>
+        struct FunctionTraits<R(C::*)(Args...) const> : FunctionTraits<R(*)(Args...)> {};
+
+        // function reference
+        template<typename R, typename... Args>
+        struct FunctionTraits<R(&)(Args...)> : FunctionTraits<R(*)(Args...)> {};
+
+        // noexcept function pointer
+        template<typename R, typename... Args>
+        struct FunctionTraits<R(*)(Args...) noexcept> : FunctionTraits<R(*)(Args...)> {};
+    }
+
+    // hash
+    namespace
+    {
+        // map from full hash of components to individual hashes of components
+        inline static std::unordered_map<size_t, std::vector<size_t>> _hashToSubHash;
+
+        // get total hash of individual component hashes
+        // assumes hashes are sorted (smallest at first and largest at last)
+        static inline size_t getHash_(const std::vector<size_t>& hashes)
         {
-            const size_t mask = size - 1; // faster than divisor
-            size_t idx = key & mask;
-            for (size_t i = 0; i < size; i++)
+            size_t hash = 0xcbf29ce484222325ULL;
+            for (size_t i = 0; i < hashes.size(); ++i)
             {
-                if (!_entries[idx].occupied)
-                {
-                    std::cerr << "key not found" << std::endl;
-                    return _entries[0].value;
-                }
-                if (_entries[idx].key == key)
-                    return _entries[idx].value;
-                idx = (idx + 1) & mask; // increment but don't over-increment
+                hash ^= hashes[i];
+                hash *= 0x100000001b3ULL;
             }
-            std::cerr << "key not found" << std::endl;
-            return _entries[0].value;
+
+            // update map
+            const auto& it = _hashToSubHash.find(hash);
+            if (it == _hashToSubHash.end())
+                _hashToSubHash.insert({ hash, hashes });
+
+            return hash;
         }
 
-        void set(size_t key, const T& value)
+        // sub: child list
+        // whole: super list
+        // assumes both are sorted
+        // O(N) where N is whole.size()
+        static inline bool hashCollides_(const std::vector<size_t>& sub, const std::vector<size_t>& whole)
         {
-            const size_t mask = size - 1;
-            size_t idx = key & mask;
-            for (size_t i = 0; i < size; i++)
-            {
-                if (_entries[idx].occupied)
+            size_t s = 0;
+            for (size_t i = 0; i < whole.size(); i++)
+                if (whole[i] == sub[s])
                 {
-                    if (_entries[idx].key == key)
+                    s++;
+                    if (s == sub.size())
+                        return true;
+                }
+            return false;
+        }
+
+        static constexpr size_t fnv1a_64_(const char* s, size_t count)
+        {
+            size_t hash = 0xcbf29ce484222325ULL;
+            for (size_t i = 0; i < count; ++i)
+            {
+                hash ^= static_cast<size_t>(s[i]);
+                hash *= 0x100000001b3ULL;
+            }
+            return hash;
+        }
+
+        template <typename T>
+        static constexpr size_t getTypeHash_()
+        {
+#if defined(__clang__) || defined(__GNUC__)
+            constexpr auto& sig = __PRETTY_FUNCTION__;
+#elif defined(_MSC_VER)
+            constexpr auto& sig = __FUNCSIG__;
+#else
+#error "Unsupported compiler for compile-time type hash"
+#endif
+            // compute FNV-1a over the full signature
+            return fnv1a_64_(sig, sizeof(sig) / sizeof(char));
+        }
+
+        // first: hashes second: sizes
+        template<typename... Ts>
+        static constexpr std::pair<std::vector<size_t>, std::vector<size_t>> createSortedHashesAndSizes_()
+        {
+            constexpr size_t count = sizeof...(Ts);
+            std::vector<size_t> hashes{ getTypeHash_<Ts>()... };
+            std::vector<size_t> sizes{ sizeof(Ts)... };
+            //bubble sort
+            for (size_t i = 0; i < count - 1; i++)
+                for (size_t j = i + 1; j < count; j++)
+                    if (hashes[j] > hashes[i])
                     {
-                        _entries[idx].value = value;
-                        return;
+                        std::swap(hashes[i], hashes[j]);
+                        std::swap(sizes[i], sizes[j]);
                     }
-                }
-                else
-                {
-                    _entries[idx].occupied = true;
-                    _entries[idx].key = key;
-                    _entries[idx].value = value;
-                    return;
-                }
-                idx = (idx + 1) & mask;
-            }
-            std::cerr << "no empty place found" << std::endl;
+            return { std::move(hashes), std::move(sizes) };
         }
-
-        size_t getIndex(size_t key)
-        {
-            const size_t mask = size - 1;
-            size_t idx = key & mask;
-            for (size_t i = 0; i < size; i++)
-            {
-                if (_entries[idx].occupied & (_entries[idx].key == key))
-                    return idx;
-                idx = (idx + 1) & mask;
-            }
-            return -1;
-        }
-
-    private:
-        Entry* _entries;
-    };
+    }
 
     struct Entity
     {
+        const size_t rowIndex;
         const size_t archetypeHash;
-        const size_t rowId;
-        Entity(size_t archetypeHash, size_t rowId) :archetypeHash(archetypeHash), rowId(rowId)
-        {
-        }
-    };
-
-    // assumes array border handling is done by consumer (Archetype)
-    struct ComponentType
-    {
-        ComponentType() : _size(0)
-        {
-            std::cerr << "empty ComponentType was created!" << std::endl;
-        }
-
-        ComponentType(size_t size) : _size(size)
-        {
-        }
-
-        void swap(size_t destinationIndex, size_t sourceIndex)
-        {
-            size_t ptr = (size_t)componentsBuffer.data();
-            void* dst = (void*)(ptr + destinationIndex * _size);
-            void* src = (void*)(ptr + sourceIndex * _size);
-            memcpy(dst, src, _size);
-        }
-
-        template<typename T>
-        T& get(const size_t index)
-        {
-            T* ptr = (T*)componentsBuffer.data();
-            return ptr[index];
-        }
-
-        template<typename T>
-        void add(const T& value, const size_t index)
-        {
-            // ensure size
-            if (index * _size >= componentsBuffer.size())
-            {
-                // new buffer twice the size (starting from 2)
-                const auto count = componentsBuffer.size() / _size;
-                componentsBuffer.resize(sizeof(T) * (count > 0 ? count : 1) * 2);
-            }
-
-            T* ptr = (T*)componentsBuffer.data();
-            ptr[index] = value;
-        }
-
-        template<typename T>
-        T* getBuffer()
-        {
-            return (T*)componentsBuffer.data();
-        }
-
-    private:
-        size_t _size;
-        std::vector<std::byte> componentsBuffer{};
+        const size_t worldVer;
     };
 
     struct Archetype
     {
-        const size_t componentCount;
-        const size_t id = s_lastId++;
-        const std::vector<size_t> componentHashes;
-        const size_t archetypeHash;
+        const size_t hash;
+        const std::unordered_map<size_t, size_t> _componentHashMap;
+        const std::vector<size_t> _componentHashes;
+        const std::vector<size_t> _componentSizes;
+        std::vector<std::vector<std::byte>> _componentRows;
+        std::vector<size_t> _toRemove; // sorted: least value at 0 largest at last
 
-        template<typename... Ts>
-        inline static Archetype* create()
+        Archetype() : hash(), _componentHashMap(), _componentHashes(), _componentSizes(), _componentRows(), _toRemove() {}
+
+        // assumes hashes is sorted
+        Archetype(const std::vector<size_t>& sizes, const std::vector<size_t>& hashes) : hash(getHash_(hashes)), _componentHashMap(createComponentHashMap_(hashes)), _componentSizes(sizes), _componentHashes(hashes), _componentRows(), _toRemove()
         {
-            constexpr size_t count = getVariadicCount<Ts...>();
-            constexpr std::array<size_t, count> hashes = createSortedHashes<Ts...>();
-            constexpr std::array<size_t, count> sizes = createSortedSizes<Ts...>();
-            constexpr size_t hash = createSortedHash<Ts...>();
-            Archetype* archetype = new Archetype(
-                count,
-                std::vector<size_t>(hashes.begin(), hashes.end()),
-                hash);
-            for (size_t i = 0; i < count; i++)
-                archetype->_componentTypes.set(hashes[i], ComponentType(sizes[i]));
-            return archetype;
+            _componentRows.reserve(hashes.size());
+            for (size_t i = 0; i < hashes.size(); i++)
+                _componentRows.push_back({});
         }
 
-        // add and return index of component (size_t: component hash)
-        // it assumes components are correctly aligning with this archtype
-        template<typename... Ts>
-        size_t add(const Ts... components)
+        static Archetype createAppended(const Archetype& other, const std::vector<size_t>& newSizes, const std::vector<size_t>& newHashes)
         {
-            (..., _addComponent(components));
-            return _count++;
+            std::vector<size_t> hashes;
+            std::vector<size_t> sizes;
+            const size_t count = other._componentHashes.size() + newHashes.size();
+            hashes.reserve(count);
+            sizes.reserve(count);
+            hashes.insert(hashes.end(), other._componentHashes.begin(), other._componentHashes.end());
+            sizes.insert(sizes.end(), other._componentSizes.begin(), other._componentSizes.end());
+
+            // sort based on hashes
+            for (size_t i = 0; i < hashes.size() - 1; i++)
+                for (size_t j = i + 1; j < hashes.size(); j++)
+                    if (hashes[i] > hashes[j])
+                    {
+                        std::swap(hashes[i], hashes[j]);
+                        std::swap(sizes[i], sizes[j]);
+                    }
+
+            return Archetype(sizes, hashes);
         }
 
-        // assumes indices are sorted (least at 0, most at the end)
-        // also assumes indices isn't over-sized
-        void remove(const std::vector<size_t>& indices)
+        std::byte* getComponent(const size_t hash, const size_t rowIndex)
         {
-            size_t i = indices.size() - 1;
-            while (true)
+            const size_t index = _componentHashMap.at(hash);
+            const size_t size = _componentSizes[index];
+            std::byte* ptr = _componentRows[index].data();
+            return ptr + size * rowIndex;
+        }
+
+        std::vector<std::byte*> getRow(const size_t rowIndex)
+        {
+            std::vector<std::byte*> result;
+            result.reserve(_componentSizes.size());
+            for (size_t i = 0; i < _componentSizes.size(); i++)
             {
-                auto row = indices[i];
-                // remove row
-                for (size_t i = 0; i < _componentTypes.size; i++)
-                    _componentTypes.getFromIndex(i).swap(row, _count - 1);
-                _count--;
+                auto component = getComponent(_componentHashes[i], rowIndex);
+                result.push_back(component);
+            }
+            return result;
+        }
 
-                if (i == 0)
-                    break;
-                i--;
+        // hashes' indices correspond to the components' indices
+        void add(const std::vector<std::span<std::byte>>& components, const std::vector<size_t>& hashes)
+        {
+            // per component (not per row)
+            for (size_t i = 0; i < hashes.size(); i++)
+            {
+                const size_t hash = hashes[i];
+                const auto& addingRows = components[i];
+
+                const size_t index = _componentHashMap.at(hash);
+                const size_t size = _componentSizes[index];
+                auto& rows = _componentRows[index];
+
+                rows.reserve(rows.size() + addingRows.size());
+                rows.insert(rows.end(), addingRows.begin(), addingRows.end());
             }
         }
 
-        template<typename T>
-        T& get(size_t index)
+        void markForRemoval(const size_t rowIndex)
         {
-            constexpr auto hash = getTypeHash<T>();
-            auto& componentType = _componentTypes.get(hash);
-            return componentType.get<T>(index);
+            auto it = std::lower_bound(_toRemove.begin(), _toRemove.end(), rowIndex);
+            _toRemove.insert(it, rowIndex);
         }
 
-        template<typename T>
-        T* getArray()
+        void flushMarks() { flushRemoves_(); }
+
+        size_t getRowsCount() const
         {
-            constexpr auto hash = getTypeHash<T>();
-            auto& componentType = _componentTypes.get(hash);
-            return componentType.getBuffer<T>();
+            return _componentRows[0].size() / _componentSizes[0];
         }
 
-        size_t getCount() const { return _count; }
-
-        bool hasComponents(const std::vector<size_t>& componentHashes)
+        void flushRemoves_()
         {
-            size_t ind = 0;
-            size_t count = componentHashes.size();
-            for (size_t i = 0; i < componentHashes.size(); i++)
-                while (true)
+            if (_toRemove.size() == 0)
+                return;
+            // loop from largest-index to smallest-index
+            for (size_t i = _toRemove.size(); i-- > 0;)
+            {
+                const size_t deleteIndex = _toRemove[i];
+                for (size_t j = 0; j < _componentRows.size(); j++)
                 {
-                    if (ind >= count)
-                        return false;
-                    if (componentHashes[ind] == componentHashes[i])
-                        break;
-                    ind++;
+                    std::vector<std::byte>& rows = _componentRows[j];
+                    const size_t size = _componentSizes[j];
+                    // swap index with the last
+                    std::swap_ranges(
+                        /* first1 */  rows.begin() + deleteIndex * size,
+                        /* last1 */  rows.begin() + deleteIndex * size + size,
+                        /* first2 */ rows.end() - size);
+                    rows.resize(rows.size() - size);
                 }
-            return true;
+            }
+
+            _toRemove.clear();
         }
 
-    private:
-        _QuickMap<ComponentType> _componentTypes;
-        size_t _count = 0;
-        inline static size_t s_lastId = 1;
-
-        Archetype(size_t componentCount, const std::vector<size_t>& componentHashes, const size_t archetypeHash)
-            : componentCount(componentCount), componentHashes(componentHashes), archetypeHash(archetypeHash), _componentTypes(componentCount)
+        static std::unordered_map<size_t, size_t> createComponentHashMap_(const std::vector<size_t>& hashes)
         {
+            std::unordered_map<size_t, size_t> result;
+            result.reserve(hashes.size());
+            for (size_t i = 0; i < hashes.size(); i++)
+                result[hashes[i]] = i;
+            return result;
         }
 
-        // assumes caller is executing this when adding a new row
         template<typename T>
-        void _addComponent(const T component)
+        static constexpr std::vector<T> appendTwoVectors_(const std::vector<T>& vec1, const std::vector<T>& vec2)
         {
-            constexpr auto hash = getTypeHash<T>();
-            constexpr auto size = sizeof(T);
-            auto& componentType = _componentTypes.get(hash);
-            componentType.add(component, _count);
+            std::vector<T> result;
+            result.reserve(vec1.size() + vec2.size());
+            result.insert(result.end(), vec1.begin(), vec1.end());
+            result.insert(result.end(), vec1.begin(), vec1.end());
+            return result;
         }
     };
 
     struct World
     {
-        ~World()
-        {
-            for (auto& it : exact_archetypes)
-                delete it.second;
-        }
+        // exact archetype hash to archetype map
+        std::unordered_map<size_t, Archetype> _archetypes;
 
-        template<typename...Ts>
-        void add(const Ts... components)
-        {
-            auto& archetype = findOrCreateExactArchetype<Ts...>();
-            archetype.add(components...);
-        }
+        // cached archetypes for a components' hash search
+        std::unordered_map<size_t, std::vector<Archetype*>> _includeArchetypesCache;
 
-        template<size_t N, typename... Ts>
-        void remove(const size_t rows[N])
-        {
-            auto& archetype = findOrCreateExactArchetype<Ts...>();
-            archetype.remove(rows);
-        }
+        size_t _ver = 0;
 
         template<typename... Ts>
-        void remove(const size_t row)
+        Entity addEntity(const Ts... components)
         {
-            auto& archetype = findOrCreateExactArchetype<Ts...>();
-            archetype.remove({ row });
+            // find archetype
+            auto [hashes, sizes] = createSortedHashesAndSizes_<Ts...>();
+            auto& archetype = getOrCreateArchetype_(hashes, sizes);
+
+            // prepare components as byte vectors
+            const std::vector<size_t> unsortedHashes = { getTypeHash_<Ts>()... };
+            std::vector<std::span<std::byte>> componentsAsbytes;
+            componentsAsbytes.reserve(sizeof...(Ts));
+            auto callback = [&componentsAsbytes](auto& val)
+                {
+                    std::byte* ptr = (std::byte*)&val;
+                    std::span<std::byte> bytes(ptr, sizeof(decltype(val)));
+                    componentsAsbytes.push_back(std::move(bytes));
+                };
+            (..., callback(components));
+
+            archetype.add(componentsAsbytes, unsortedHashes);
+            return Entity
+            {
+                .rowIndex = archetype.getRowsCount() - 1,
+                .archetypeHash = archetype.hash,
+                .worldVer = _ver
+            };
+        }
+
+        void markEntityForRemoval(const Entity& entity)
+        {
+            if (entity.worldVer != _ver)
+            {
+                std::cerr << "version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
+                abort();
+            }
+            auto& archetype = _archetypes.at(entity.archetypeHash);
+            archetype.markForRemoval(entity.rowIndex);
+        }
+
+        void flushMarks()
+        {
+            for (auto& [_, archetype] : _archetypes)
+                archetype.flushMarks();
+        }
+
+        template<typename T>
+        T& getComponent(const Entity& entity)
+        {
+            if (entity.worldVer != _ver)
+            {
+                std::cerr << "version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
+                abort();
+            }
+            auto& archetype = _archetypes[entity.archetypeHash];
+            const auto hash = getTypeHash_<T>();
+            auto* asByte = archetype.getComponent(hash, entity.rowIndex);
+            return *(T*)asByte;
         }
 
         template<typename Func>
-        void execute(Func&& func)
+        constexpr void executeParallel(Func&& func)
         {
             using traits = FunctionTraits<std::decay_t<Func>>;
-            constexpr auto argsCount = traits::argsCount;
+            constexpr size_t argsCount = traits::argsCount;
             using firstType = traits::template arg<0>;
-            if constexpr (std::is_same_v<firstType, Entity>)
-                _executeWithEntity<false>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
+            if constexpr (std::is_same_v<std::decay_t<firstType>, Entity>)
+                executeWithEntity_<true>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
             else
-                _execute<false>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
+                execute_<true>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
         }
 
         template<typename Func>
-        void executeParallel(Func&& func)
+        constexpr void execute(Func&& func)
         {
             using traits = FunctionTraits<std::decay_t<Func>>;
-            constexpr auto argsCount = traits::argsCount;
+            constexpr size_t argsCount = traits::argsCount;
             using firstType = traits::template arg<0>;
-            if constexpr (std::is_same_v<firstType, Entity>)
-                _executeWithEntity<true>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
+            if constexpr (std::is_same_v<std::decay_t<firstType>, Entity>)
+                executeWithEntity_<false>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
             else
-                _execute<true>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
+                execute_<false>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
         }
 
-        template<typename...Ts>
-        Archetype& getArchetype()
+        template<bool Parallel, typename Func, size_t... Indices>
+        void executeWithEntity_(Func&& func, std::index_sequence<Indices...>)
         {
-            return findOrCreateExactArchetype<Ts...>();
+            using traits = FunctionTraits<std::decay_t<Func>>;
+            using args = typename traits::args;
+            auto [hashes, sizes] = createSortedHashesAndSizes_<std::decay_t<typename traits::template arg<Indices + 1>>...>();
+            std::vector<Archetype*> archetypes = findArchetypesWithHashes(hashes);
+            for (size_t i = 0; i < archetypes.size(); i++)
+            {
+                Archetype& archetype = *archetypes[i];
+                // get internal component arrays
+                void* ptrs[sizeof...(Indices)]
+                {
+                    (void*)archetype.getComponent(getTypeHash_<std::decay_t<typename traits::template arg<Indices + 1>>>(), 0)...
+                };
+
+                if constexpr (Parallel)
+#pragma omp parallel for
+                    for (signed long long j = 0; j < archetype.getRowsCount(); j++)
+                    {
+                        Entity entity{ j, archetype.hash, _ver };
+                        std::invoke(
+                            std::forward<Func>(func),
+                            entity,
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices + 1>>*)ptrs[Indices])[j]...
+                        );
+                    }
+                else
+                    for (size_t j = 0; j < archetype.getRowsCount(); j++)
+                    {
+                        Entity entity{ j, archetype.hash, _ver };
+                        std::invoke(
+                            std::forward<Func>(func),
+                            entity,
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices + 1>>*)ptrs[Indices])[j]...
+                        );
+                    }
+            }
         }
 
-        size_t archetypesCount() const { return exact_archetypes.size(); }
+        template<bool Parallel, typename Func, size_t... Indices>
+        void execute_(Func&& func, std::index_sequence<Indices...>)
+        {
+            using traits = FunctionTraits<std::decay_t<Func>>;
+            using args = typename traits::args;
+            auto [hashes, sizes] = createSortedHashesAndSizes_<std::decay_t<typename traits::template arg<Indices>>...>();
+            std::vector<Archetype*> archetypes = findArchetypesWithHashes(hashes);
+            for (size_t i = 0; i < archetypes.size(); i++)
+            {
+                Archetype& archetype = *archetypes[i];
+                // get internal component arrays
+                void* ptrs[sizeof...(Indices)]
+                {
+                    (void*)archetype.getComponent(getTypeHash_<std::decay_t<typename traits::template arg<Indices>>>(), 0)...
+                };
 
-        size_t totalEntityCount() const
+                if constexpr (Parallel)
+#pragma omp parallel for
+                    for (signed long long j = 0; j < archetype.getRowsCount(); j++)
+                    {
+                        std::invoke(
+                            std::forward<Func>(func),
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
+                        );
+                    }
+                else
+                    for (size_t j = 0; j < archetype.getRowsCount(); j++)
+                    {
+                        std::invoke(
+                            std::forward<Func>(func),
+                            // take indices from internal component arrays
+                            ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
+                        );
+                    }
+            }
+        }
+
+        size_t getTotalEntityCount() const
         {
             size_t r = 0;
-            for (auto& archetype : exact_archetypes)
-                r += archetype.second->getCount();
+            for (auto& it : _archetypes)
+            {
+                auto& archetype = it.second;
+                r += archetype.getRowsCount();
+            }
             return r;
         }
 
-    private:
-        // key: createSortedHash<Ts...>
-        // if a key is createSortedHash<int,float>(), it will contain pointer to all archetypes having the two components `int` and `float`
-        std::unordered_map<size_t, std::vector<Archetype*>> contain_archetypes{};
-        std::unordered_map<size_t, Archetype*> exact_archetypes;
+        size_t getTotalArchetypesCount() const { return _archetypes.size(); }
 
-        template<bool Parallel, typename Func, size_t... Indices>
-        void _execute(Func&& func, std::index_sequence<Indices...>)
+        Archetype& getOrCreateArchetype_(const std::vector<size_t>& hashes, const std::vector<size_t>& sizes)
         {
-            using traits = FunctionTraits<std::decay_t<Func>>;
-            using args = typename traits::args;
-            auto& archetypes = findMatchingArchetypes<std::decay_t<typename traits::template arg<Indices>>...>();
-            for (size_t i = 0; i < archetypes.size(); i++)
+            const size_t hash = getHash_(hashes);
+            const auto& it = _archetypes.find(hash);
+            if (it != _archetypes.end())
+                return it->second;
+
+            // create new archetype
+            const auto& insertion = _archetypes.insert({ hash, Archetype(sizes, hashes) });
+            auto& archetype = insertion.first->second;
+
+            // add to hash caches
+            for (auto& [hash, archetypes] : _includeArchetypesCache)
             {
-                auto& archetype = archetypes[i];
-                // get internal component arrays
-                void* ptrs[getVariadicCount<Indices...>()]{ (void*)archetype->getArray<std::decay_t<typename traits::template arg<Indices>>>()... };
+                const auto& componentHashes = _hashToSubHash.at(hash);
 
-                if constexpr (Parallel)
-#pragma omp parallel for
-                    for (signed long long j = 0; j < archetype->getCount(); j++)
-                        std::invoke(
-                            std::forward<Func>(func),
-                            // take indices from internal component arrays
-                            ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
-                        );
-                else
-                    for (size_t j = 0; j < archetype->getCount(); j++)
-                        std::invoke(
-                            std::forward<Func>(func),
-                            // take indices from internal component arrays
-                            ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
-                        );
+                // check if this archetype belongs to this set
+                if (hashCollides_(componentHashes, hashes))
+                    archetypes.push_back(&archetype);
             }
+            return archetype;
         }
 
-        template<bool Parallel, typename Func, size_t... Indices>
-        void _executeWithEntity(Func&& func, std::index_sequence<Indices...>)
+        std::vector<Archetype*> findArchetypesWithHashes(const std::vector<size_t> hashes)
         {
-            using traits = FunctionTraits<std::decay_t<Func>>;
-            using args = typename traits::args;
-            auto& archetypes = findMatchingArchetypes<std::decay_t<typename traits::template arg<Indices + 1>>...>();
-            for (size_t i = 0; i < archetypes.size(); i++)
-            {
-                auto& archetype = archetypes[i];
-                // get internal component arrays
-                void* ptrs[getVariadicCount<Indices...>()]{ (void*)archetype->getArray<std::decay_t<typename traits::template arg<Indices + 1>>>()... };
+            const size_t hash = getHash_(hashes);
+            const auto& it = _includeArchetypesCache.find(hash);
+            if (it != _includeArchetypesCache.end())
+                return it->second;
 
-                if constexpr (Parallel)
-#pragma omp parallel for
-                    for (signed long long j = 0; j < archetype->getCount(); j++)
-                    {
-                        Entity entity(archetype->archetypeHash, j);
-                        std::invoke(
-                            std::forward<Func>(func),
-                            entity,
-                            // take indices from internal component arrays
-                            ((std::decay_t<typename traits::template arg<Indices + 1>>*)ptrs[Indices])[j]...
-                        );
-                    }
-                else
-                    for (size_t j = 0; j < archetype->getCount(); j++)
-                    {
-                        Entity entity(archetype->archetypeHash, j);
-                        std::invoke(
-                            std::forward<Func>(func),
-                            entity,
-                            // take indices from internal component arrays
-                            ((std::decay_t<typename traits::template arg<Indices + 1>>*)ptrs[Indices])[j]...
-                        );
-                    }
-            }
-        }
-
-        template<typename... Ts>
-        Archetype& findOrCreateExactArchetype()
-        {
-            constexpr size_t hash = createSortedHash<Ts...>();
-            auto it = exact_archetypes.find(hash);
-            if (it != exact_archetypes.end())
-                return *it->second;
-
-            // create new
-            Archetype* archetype = Archetype::create<Ts...>();
-            exact_archetypes[hash] = archetype;
-            std::cout << "new archetype created for ";
-            (..., (std::cout << typeid(Ts).name() << ", "));
-            std::cout << " hash: " << archetype->archetypeHash << "\n";
-            addArchetypeToIncludesListRecursively<Ts...>(archetype);
-            return *archetype;
-        }
-
-        template<typename... Ts>
-        void addArchetypeToIncludesListRecursively(Archetype* archetype)
-        {
-            constexpr auto hashes = createSortedHashes<Ts...>();
-            constexpr auto includeHashes = createHashForAllCombinationsOfHashes(hashes);
-            for (auto& hash : includeHashes)
-            {
-                contain_archetypes[hash].push_back(archetype);
-                std::cout << "adding to hash of " << hash << "\n";
-            }
-        }
-
-        template<typename... Ts>
-        std::vector<Archetype*>& findMatchingArchetypes()
-        {
-            constexpr size_t hash = createSortedHash<Ts...>();
-            return contain_archetypes[hash];
+            // create
+            const auto& newIt = _includeArchetypesCache.insert({ hash, {} }).first;
+            auto& archetypesList = newIt->second;
+            for (auto& [_, archetype] : _archetypes)
+                if (hashCollides_(hashes, archetype._componentHashes))
+                    archetypesList.push_back(&archetype);
+            return archetypesList;
         }
     };
 }

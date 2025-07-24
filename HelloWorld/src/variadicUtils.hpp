@@ -1,3 +1,4 @@
+/*
 #pragma once
 #include <array>
 
@@ -15,56 +16,6 @@ consteval size_t getVariadicCount() { return sizeof...(Ts); }
 template<size_t...Ts>
 consteval size_t getVariadicCount() { return sizeof...(Ts); }
 
-template<typename F>
-struct FunctionTraits;
-
-// free/function pointer
-template<typename R, typename... Args>
-struct FunctionTraits<R(*)(Args...)>
-{
-    using returnType = R;
-
-    static constexpr size_t argsCount = getVariadicCount<Args...>();
-
-    template<size_t N>
-    using arg = std::tuple_element_t<N, std::tuple<Args...>>;
-
-    using args = std::tuple<Args...>;
-};
-
-// functor/lambda 
-template<typename F>
-struct FunctionTraits
-{
-    // underlying function traits
-    using _underlyingFunctionTraits = FunctionTraits<decltype(&F::operator())>;
-
-    using returnType = _underlyingFunctionTraits::returnType;
-
-    static constexpr size_t argsCount = _underlyingFunctionTraits::argsCount;
-
-    template<size_t N>
-    using arg = _underlyingFunctionTraits::template arg<N>;
-
-    using args = _underlyingFunctionTraits::args;
-};
-
-// member function pointer
-template<typename C, typename R, typename... Args>
-struct FunctionTraits<R(C::*)(Args...)> : FunctionTraits<R(*)(Args...)> {};
-
-// const member function pointer
-template<typename C, typename R, typename... Args>
-struct FunctionTraits<R(C::*)(Args...) const> : FunctionTraits<R(*)(Args...)> {};
-
-// function reference
-template<typename R, typename... Args>
-struct FunctionTraits<R(&)(Args...)> : FunctionTraits<R(*)(Args...)> {};
-
-// noexcept function pointer
-template<typename R, typename... Args>
-struct FunctionTraits<R(*)(Args...) noexcept> : FunctionTraits<R(*)(Args...)> {};
-
 consteval size_t _pow2(size_t a)
 {
     size_t r = 1;
@@ -73,46 +24,13 @@ consteval size_t _pow2(size_t a)
     return r;
 }
 
-template<size_t N>
-consteval void _createCombinations(
-    std::array<std::array<bool, N>, _pow2(N) - 1>& result,
-    int& rind,
-    int point,
-    std::array<bool, N>& current)
-{
-    if (point == current.size())
-        return;
-
-    while (point < current.size())
-    {
-        current[point] = true;
-
-        // take snapshot
-        result[rind++] = current;
-
-        _createCombinations(result, rind, point + 1, current);
-        current[point] = false;
-        point++;
-    }
-
-}
-
-template<size_t N>
-consteval std::array<std::array<bool, N>, _pow2(N) - 1> createCombinations()
-{
-    std::array<std::array<bool, N>, _pow2(N) - 1> result{};
-    int rind = 0;
-    int point = 0;
-    std::array<bool, N> current{};
-    _createCombinations(result, rind, point, current);
-    return result;
-}
-
 namespace _typeHashHelper
 {
-    consteval size_t fnv1a_64(const char* s, size_t count) {
+    consteval size_t fnv1a_64(const char* s, size_t count)
+    {
         size_t hash = 0xcbf29ce484222325ULL;
-        for (size_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i)
+        {
             hash ^= static_cast<size_t>(s[i]);
             hash *= 0x100000001b3ULL;
         }
@@ -138,39 +56,6 @@ template<typename T>
 consteval size_t getTypeHash()
 {
     return _typeHashHelper::type_hash<T>();
-}
-
-template<size_t N>
-consteval std::array<size_t, _pow2(N) - 1> createHashForAllCombinationsOfHashes(const std::array<size_t, N>& hashes)
-{
-    constexpr auto combinations = createCombinations<N>();
-    std::array<size_t, _pow2(N) - 1> r{};
-    for (size_t i = 0; i < combinations.size(); i++)
-    {
-        // count size
-        size_t size = 0;
-        for (size_t j = 0; j < hashes.size(); j++)
-            if (combinations[i][j])
-                size++;
-
-        // create hash
-        size_t hash = size;
-        for (size_t j = 0; j < hashes.size(); j++)
-            if (combinations[i][j])
-                hash ^= hashes[j] + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-        r[i] = hash;
-    }
-    return r;
-}
-
-template<typename... Ts>
-consteval size_t createSortedHash()
-{
-    auto hashes = createSortedHashes<Ts...>();
-    size_t hash = hashes.size();
-    for (auto& i : hashes)
-        hash ^= i + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-    return hash;
 }
 
 template<typename... Ts>
@@ -210,3 +95,4 @@ consteval std::array<size_t, getVariadicCount<Ts...>()> createSortedSizes()
             }
     return sizes;
 }
+*/
