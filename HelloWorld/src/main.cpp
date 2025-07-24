@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <sstream>
 
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glad/glad.h>
@@ -73,6 +74,15 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     float sensitivity = 0.5f;
     camera.fov -= yoffset * sensitivity;
 }
+
+struct A
+{
+    int a;
+};
+struct B
+{
+    int b;
+};
 
 constexpr size_t iter = 5;
 constexpr size_t count = 10000;
@@ -197,7 +207,7 @@ int main()
             std::cout << msg.str();
             vec3.x = -1;
         });
-    world.execute([](ecs::Entity entity, glm::vec2 vec2, glm::vec3 vec3)
+    world.execute([](ecs::Entity& entity, glm::vec2 vec2, glm::vec3 vec3)
         {
             std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << " vec2: " << vec2.x << " " << vec2.y << "\n";
         });
@@ -209,9 +219,73 @@ int main()
         {
             std::cout << "vec3: " << v.x << " " << v.y << " " << v.z << "\n";
         });
-    world.execute([](ecs::Entity entity, glm::vec3 v)
+    world.executeParallel([](ecs::Entity& entity, glm::vec3 v)
         {
-            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " vec3: " << v.x << " " << v.y << " " << v.z << "\n";
+            std::stringstream ss;
+            ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " vec3: " << v.x << " " << v.y << " " << v.z << "\n";
+            std::cout << ss.str();
+        });
+    world.execute([](ecs::Entity& entity, glm::vec3 v)
+        {
+            std::stringstream ss;
+            ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " vec3: " << v.x << " " << v.y << " " << v.z << "\n";
+            std::cout << ss.str();
+        });
+
+    for (size_t i = 0; i < 100; i++)
+        world.addEntity(i);
+
+    world.executeParallel([&world](ecs::Entity& entity, size_t i)
+        {
+            std::stringstream ss;
+            ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " i: " << i << "\n";
+            std::cout << ss.str();
+            if (i % 2 == 1)
+                world.markEntityForRemoval(entity);
+        });
+    world.flushMarks();
+    std::cout << "after removing odds...\n";
+    world.executeParallel([&world](ecs::Entity& entity, size_t i)
+        {
+            std::stringstream ss;
+            ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " i: " << i << "\n";
+            std::cout << ss.str();
+            if (i % 3 == 0)
+                world.markEntityForRemoval(entity);
+        });
+    world.flushMarks();
+    std::cout << "after removing multiples of 3...\n";
+    std::vector<size_t> list;
+    world.executeParallel([&list](ecs::Entity entity, size_t i)
+        {
+            std::stringstream ss;
+            ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " i: " << i << "\n";
+            std::cout << ss.str();
+            list.push_back(i);
+        });
+    std::sort(list.begin(), list.end());
+    for (auto i : list)
+        std::cout << i << "\n";
+
+
+    std::cout << "\ntesting adding and removing components\n\n";
+    world.addEntity(A(123));
+    //world.execute([&world](ecs::Entity& entity, A a)
+    //    {
+    //        std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
+    //        world.addComponents(entity, B(82));
+    //    });
+    world.execute([&world](ecs::Entity& entity, A a)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
+        });
+    world.execute([&world](ecs::Entity& entity, B b)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " b: " << b.b << "\n";
+        });
+    world.execute([&world](ecs::Entity& entity, A a, B b)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << " b: " << b.b << "\n";
         });
 
     return 0;

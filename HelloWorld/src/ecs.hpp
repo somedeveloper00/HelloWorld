@@ -464,11 +464,8 @@ namespace ecs
         size_t getTotalEntityCount() const
         {
             size_t r = 0;
-            for (auto& it : _archetypes)
-            {
-                auto& archetype = it.second;
+            for (auto& [_, archetype] : _archetypes)
                 r += archetype.getRowsCount();
-            }
             return r;
         }
 

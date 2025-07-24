@@ -55,8 +55,5 @@
     <ClInclude Include="src\ecs.hpp">
       <Filter>Headers</Filter>
     </ClInclude>
-    <ClInclude Include="src\variadicUtils.hpp">
-      <Filter>Headers</Filter>
-    </ClInclude>
   </ItemGroup>
 </Project>
