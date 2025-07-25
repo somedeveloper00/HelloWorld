@@ -203,8 +203,8 @@ int main()
     vec3 = world.getComponent<glm::vec3>(entity2);
     vec2 = world.getComponent<glm::vec2>(entity2);
     std::cout << "vec2: " << vec2.x << " " << vec2.y << " vec3: " << vec3.x << " " << vec3.y << " " << vec3.z << "\n";
-    world.markEntityForRemoval(entity3);
-    world.markEntityForRemoval(entity2);
+    world.removeEntity(entity3);
+    world.removeEntity(entity2);
     //world.markEntityForRemoval(entity6);
     world.flushMarks();
     std::cout << "count: " << world.getTotalEntityCount() << " archetypes: " << world.getTotalArchetypesCount() << "\n";
@@ -250,7 +250,7 @@ int main()
             ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " i: " << i << "\n";
             std::cout << ss.str();
             if (i % 2 == 1)
-                world.markEntityForRemoval(entity);
+                world.removeEntity(entity);
         });
     world.flushMarks();
     std::cout << "after removing odds...\n";
@@ -260,7 +260,7 @@ int main()
             ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " i: " << i << "\n";
             std::cout << ss.str();
             if (i % 3 == 0)
-                world.markEntityForRemoval(entity);
+                world.removeEntity(entity);
         });
     world.flushMarks();
     std::cout << "after removing multiples of 3...\n";

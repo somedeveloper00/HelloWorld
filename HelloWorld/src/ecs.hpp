@@ -369,7 +369,7 @@ namespace ecs
             };
         }
 
-        void markEntityForRemoval(const Entity& entity)
+        void removeEntity(const Entity& entity)
         {
             abortIfEntityNotUpdated_(entity);
             auto& archetype = _archetypes.at(entity.archetypeHash);
