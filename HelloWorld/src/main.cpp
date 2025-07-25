@@ -77,6 +77,7 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 
 struct A
 {
+    float extra;
     int a;
 };
 struct B
@@ -300,8 +301,23 @@ int main()
     world.execute([&world](ecs::Entity& entity, A a, B b)
         {
             std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << " b: " << b.b << "\n";
+            world.removeComponents<A>(entity);
         });
-
+    world.flushMarks();
+    std::cout << "after removing A\n";
+    std::cout << "archetype count: " << world.getTotalArchetypesCount() << " total entities: " << world.getTotalEntityCount() << "\n";
+    world.execute([&world](ecs::Entity& entity, A a)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
+        });
+    world.execute([&world](ecs::Entity& entity, B b)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " b: " << b.b << "\n";
+        });
+    world.execute([&world](ecs::Entity& entity, A a, B b)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << " b: " << b.b << "\n";
+        });
     return 0;
 
     // configure stbi

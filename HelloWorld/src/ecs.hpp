@@ -69,6 +69,11 @@ namespace ecs
         // assumes hashes are sorted (smallest at first and largest at last)
         static inline size_t getHash_(const std::vector<size_t>& hashes)
         {
+            if (hashes.size() == 1)
+            {
+                _hashToSubHash.insert({ hashes[0], {hashes[0]} });
+                return hashes[0];
+            }
             size_t hash = 0xcbf29ce484222325ULL;
             for (size_t i = 0; i < hashes.size(); ++i)
             {
@@ -139,6 +144,16 @@ namespace ecs
                     }
         }
 
+        static constexpr void ensureNeitherEqual__(std::vector<size_t>& hashes)
+        {
+            for (size_t i = 0; i < hashes.size() - 1; i++)
+                if (hashes[i] == hashes[i + 1])
+                {
+                    std::cerr << "usage error: duplicate component hashes found: " << hashes[i] << std::endl;
+                    abort();
+                }
+        }
+
         // first: hashes second: sizes
         template<typename... Ts>
         static constexpr std::pair<std::vector<size_t>, std::vector<size_t>> createSortedHashesAndSizes_()
@@ -147,6 +162,7 @@ namespace ecs
             std::vector<size_t> hashes{ getTypeHash_<Ts>()... };
             std::vector<size_t> sizes{ sizeof(Ts)... };
             sortHashesAndSizes__(hashes, sizes);
+            ensureNeitherEqual__(hashes);
             return { std::move(hashes), std::move(sizes) };
         }
 
@@ -166,8 +182,30 @@ namespace ecs
             (..., sizes.push_back(sizeof(Ts)));
 
             sortHashesAndSizes__(hashes, sizes);
+            ensureNeitherEqual__(hashes);
             return { std::move(hashes), std::move(sizes) };
         }
+
+        // first: hashes second: sizes
+        template<typename... Ts>
+        static constexpr std::pair<std::vector<size_t>, std::vector<size_t>> createRemovedSortedHashesAndSizes_(const std::vector<size_t>& oldHashes, const std::vector<size_t>& oldSizes)
+        {
+            std::vector<size_t> hashes;
+            std::vector<size_t> sizes;
+            hashes.reserve(oldHashes.size() - sizeof...(Ts));
+            sizes.reserve(oldHashes.size() - sizeof...(Ts));
+
+            const std::vector<size_t> removingHashes{ getTypeHash_<Ts>()... };
+
+            for (size_t i = 0; i < oldHashes.size(); i++)
+                if (std::find(removingHashes.begin(), removingHashes.end(), oldHashes[i]) == removingHashes.end())
+                {
+                    hashes.push_back(oldHashes[i]);
+                    sizes.push_back(oldSizes[i]);
+                }
+            return { std::move(hashes), std::move(sizes) };
+        }
+
     }
 
     struct Entity
@@ -385,6 +423,27 @@ namespace ecs
             targetArchetype.add(row, unsortedHashes);
         }
 
+        template<typename... Ts>
+        void removeComponents(const Entity& entity)
+        {
+            abortIfEntityNotUpdated_(entity);
+            auto& archetype = _archetypes.at(entity.archetypeHash);
+            archetype.markForRemoval(entity.rowIndex);
+
+            // find target archetype
+            auto [hashes, sizes] = createRemovedSortedHashesAndSizes_<Ts...>(archetype._componentHashes, archetype._componentSizes);
+            auto& targetArchetype = getOrCreateArchetype_(hashes, sizes);
+
+            // add entity
+            auto row = archetype.getRow(entity.rowIndex);
+            std::vector<size_t> removingHashes{ getTypeHash_<Ts>()... };
+            for (size_t i = row.size(); i-- > 0;)
+                if (std::find(removingHashes.begin(), removingHashes.end(), archetype._componentHashes[i]) != removingHashes.end())
+                    row.erase(row.begin() + i);
+
+            targetArchetype.add(row, hashes);
+        }
+
         template<typename Func>
         constexpr void executeParallel(Func&& func)
         {
@@ -499,15 +558,14 @@ namespace ecs
 
         size_t getTotalArchetypesCount() const { return _archetypes.size(); }
 
-        void abortIfEntityNotUpdated_(const Entity& entity)
+        void abortIfEntityNotUpdated_(const Entity& entity) const
         {
             if (entity.worldVer != _ver)
             {
-                std::cerr << "version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
+                std::cerr << "usage error: version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
                 abort();
             }
         }
-
 
         Archetype& getOrCreateArchetype_(const std::vector<size_t>& hashes, const std::vector<size_t>& sizes)
         {
