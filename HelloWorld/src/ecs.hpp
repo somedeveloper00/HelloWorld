@@ -126,13 +126,9 @@ namespace ecs
             return fnv1a_64_(sig, sizeof(sig) / sizeof(char));
         }
 
-        // first: hashes second: sizes
-        template<typename... Ts>
-        static constexpr std::pair<std::vector<size_t>, std::vector<size_t>> createSortedHashesAndSizes_()
+        static constexpr void sortHashesAndSizes__(std::vector<size_t>& hashes, std::vector<size_t>& sizes)
         {
-            constexpr size_t count = sizeof...(Ts);
-            std::vector<size_t> hashes{ getTypeHash_<Ts>()... };
-            std::vector<size_t> sizes{ sizeof(Ts)... };
+            const size_t count = hashes.size();
             //bubble sort
             for (size_t i = 0; i < count - 1; i++)
                 for (size_t j = i + 1; j < count; j++)
@@ -141,6 +137,35 @@ namespace ecs
                         std::swap(hashes[i], hashes[j]);
                         std::swap(sizes[i], sizes[j]);
                     }
+        }
+
+        // first: hashes second: sizes
+        template<typename... Ts>
+        static constexpr std::pair<std::vector<size_t>, std::vector<size_t>> createSortedHashesAndSizes_()
+        {
+            constexpr size_t count = sizeof...(Ts);
+            std::vector<size_t> hashes{ getTypeHash_<Ts>()... };
+            std::vector<size_t> sizes{ sizeof(Ts)... };
+            sortHashesAndSizes__(hashes, sizes);
+            return { std::move(hashes), std::move(sizes) };
+        }
+
+        // first: hashes second: sizes
+        template<typename... Ts>
+        static constexpr std::pair<std::vector<size_t>, std::vector<size_t>> createAppendedSortedHashesAndSizes_(const std::vector<size_t>& oldHashes, const std::vector<size_t>& oldSizes)
+        {
+            std::vector<size_t> hashes;
+            std::vector<size_t> sizes;
+            hashes.reserve(oldHashes.size() + sizeof...(Ts));
+            sizes.reserve(oldHashes.size() + sizeof...(Ts));
+
+            hashes.insert(hashes.end(), oldHashes.begin(), oldHashes.end());
+            sizes.insert(sizes.end(), oldSizes.begin(), oldSizes.end());
+
+            (..., hashes.push_back(getTypeHash_<Ts>()));
+            (..., sizes.push_back(sizeof(Ts)));
+
+            sortHashesAndSizes__(hashes, sizes);
             return { std::move(hashes), std::move(sizes) };
         }
     }
@@ -164,46 +189,24 @@ namespace ecs
         Archetype() : hash(), _componentHashMap(), _componentHashes(), _componentSizes(), _componentRows(), _toRemove() {}
 
         // assumes hashes is sorted
-        Archetype(const std::vector<size_t>& sizes, const std::vector<size_t>& hashes) : hash(getHash_(hashes)), _componentHashMap(createComponentHashMap_(hashes)), _componentSizes(sizes), _componentHashes(hashes), _componentRows(), _toRemove()
+        Archetype(const std::vector<size_t>& hashes, const std::vector<size_t>& sizes) : hash(getHash_(hashes)), _componentHashMap(createComponentHashMap_(hashes)), _componentSizes(sizes), _componentHashes(hashes), _componentRows(), _toRemove()
         {
             _componentRows.reserve(hashes.size());
             for (size_t i = 0; i < hashes.size(); i++)
                 _componentRows.push_back({});
         }
 
-        static Archetype createAppended(const Archetype& other, const std::vector<size_t>& newSizes, const std::vector<size_t>& newHashes)
-        {
-            std::vector<size_t> hashes;
-            std::vector<size_t> sizes;
-            const size_t count = other._componentHashes.size() + newHashes.size();
-            hashes.reserve(count);
-            sizes.reserve(count);
-            hashes.insert(hashes.end(), other._componentHashes.begin(), other._componentHashes.end());
-            sizes.insert(sizes.end(), other._componentSizes.begin(), other._componentSizes.end());
-
-            // sort based on hashes
-            for (size_t i = 0; i < hashes.size() - 1; i++)
-                for (size_t j = i + 1; j < hashes.size(); j++)
-                    if (hashes[i] > hashes[j])
-                    {
-                        std::swap(hashes[i], hashes[j]);
-                        std::swap(sizes[i], sizes[j]);
-                    }
-
-            return Archetype(sizes, hashes);
-        }
-
-        std::byte* getComponent(const size_t hash, const size_t rowIndex)
+        std::span<std::byte> getComponent(const size_t hash, const size_t rowIndex)
         {
             const size_t index = _componentHashMap.at(hash);
             const size_t size = _componentSizes[index];
             std::byte* ptr = _componentRows[index].data();
-            return ptr + size * rowIndex;
+            return std::span<std::byte>(ptr + size * rowIndex, size);
         }
 
-        std::vector<std::byte*> getRow(const size_t rowIndex)
+        std::vector<std::span<std::byte>> getRow(const size_t rowIndex)
         {
-            std::vector<std::byte*> result;
+            std::vector<std::span<std::byte>> result;
             result.reserve(_componentSizes.size());
             for (size_t i = 0; i < _componentSizes.size(); i++)
             {
@@ -257,10 +260,11 @@ namespace ecs
                     std::vector<std::byte>& rows = _componentRows[j];
                     const size_t size = _componentSizes[j];
                     // swap index with the last
-                    std::swap_ranges(
-                        /* first1 */  rows.begin() + deleteIndex * size,
-                        /* last1 */  rows.begin() + deleteIndex * size + size,
-                        /* first2 */ rows.end() - size);
+                    if (deleteIndex < rows.size() / size - 1)
+                        std::swap_ranges(
+                            /* first1 */  rows.begin() + deleteIndex * size,
+                            /* last1 */  rows.begin() + deleteIndex * size + size,
+                            /* first2 */ rows.end() - size);
                     rows.resize(rows.size() - size);
                 }
             }
@@ -297,6 +301,7 @@ namespace ecs
         std::unordered_map<size_t, std::vector<Archetype*>> _includeArchetypesCache;
 
         size_t _ver = 0;
+        size_t _executingCount = 0;
 
         template<typename... Ts>
         Entity addEntity(const Ts... components)
@@ -328,57 +333,84 @@ namespace ecs
 
         void markEntityForRemoval(const Entity& entity)
         {
-            if (entity.worldVer != _ver)
-            {
-                std::cerr << "version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
-                abort();
-            }
+            abortIfEntityNotUpdated_(entity);
             auto& archetype = _archetypes.at(entity.archetypeHash);
             archetype.markForRemoval(entity.rowIndex);
         }
 
         void flushMarks()
         {
+            while (_executingCount != 0) {}
             for (auto& [_, archetype] : _archetypes)
                 archetype.flushMarks();
+            _ver++;
         }
 
         template<typename T>
         T& getComponent(const Entity& entity)
         {
-            if (entity.worldVer != _ver)
-            {
-                std::cerr << "version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
-                abort();
-            }
+            abortIfEntityNotUpdated_(entity);
             auto& archetype = _archetypes[entity.archetypeHash];
-            const auto hash = getTypeHash_<T>();
-            auto* asByte = archetype.getComponent(hash, entity.rowIndex);
-            return *(T*)asByte;
+            constexpr auto hash = getTypeHash_<T>();
+            auto asByte = archetype.getComponent(hash, entity.rowIndex);
+            return *(T*)asByte.data();
+        }
+
+        template<typename... Ts>
+        void addComponents(const Entity& entity, const Ts... components)
+        {
+            abortIfEntityNotUpdated_(entity);
+            auto& archetype = _archetypes.at(entity.archetypeHash);
+            archetype.markForRemoval(entity.rowIndex);
+
+            // find target archetype
+            auto [hashes, sizes] = createAppendedSortedHashesAndSizes_<Ts...>(archetype._componentHashes, archetype._componentSizes);
+            auto& targetArchetype = getOrCreateArchetype_(hashes, sizes);
+
+            // add entity
+            auto row = archetype.getRow(entity.rowIndex);
+            row.reserve(row.size() + sizeof...(Ts));
+            auto callback = [&row](auto& val)
+                {
+                    std::byte* ptr = (std::byte*)&val;
+                    std::span<std::byte> bytes(ptr, sizeof(decltype(val)));
+                    row.push_back(std::move(bytes));
+                };
+            (..., callback(components));
+            std::vector<size_t> unsortedHashes;
+            unsortedHashes.reserve(hashes.size());
+            unsortedHashes.insert(unsortedHashes.end(), archetype._componentHashes.begin(), archetype._componentHashes.end());
+            (..., unsortedHashes.push_back(getTypeHash_<Ts>()));
+
+            targetArchetype.add(row, unsortedHashes);
         }
 
         template<typename Func>
         constexpr void executeParallel(Func&& func)
         {
+            _executingCount++;
             using traits = FunctionTraits<std::decay_t<Func>>;
             constexpr size_t argsCount = traits::argsCount;
             using firstType = traits::template arg<0>;
-            if constexpr (std::is_same_v<std::decay_t<firstType>, Entity>)
+            if constexpr (std::is_same_v<firstType, Entity&>)
                 executeWithEntity_<true>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
             else
                 execute_<true>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
+            _executingCount--;
         }
 
         template<typename Func>
         constexpr void execute(Func&& func)
         {
+            _executingCount++;
             using traits = FunctionTraits<std::decay_t<Func>>;
             constexpr size_t argsCount = traits::argsCount;
             using firstType = traits::template arg<0>;
-            if constexpr (std::is_same_v<std::decay_t<firstType>, Entity>)
+            if constexpr (std::is_same_v<firstType, Entity&>)
                 executeWithEntity_<false>(std::forward<Func>(func), std::make_index_sequence<argsCount - 1>{});
             else
                 execute_<false>(std::forward<Func>(func), std::make_index_sequence<argsCount>{});
+            _executingCount--;
         }
 
         template<bool Parallel, typename Func, size_t... Indices>
@@ -394,7 +426,7 @@ namespace ecs
                 // get internal component arrays
                 void* ptrs[sizeof...(Indices)]
                 {
-                    (void*)archetype.getComponent(getTypeHash_<std::decay_t<typename traits::template arg<Indices + 1>>>(), 0)...
+                    (void*)archetype.getComponent(getTypeHash_<std::decay_t<typename traits::template arg<Indices + 1>>>(), 0).data()...
                 };
 
                 if constexpr (Parallel)
@@ -436,28 +468,24 @@ namespace ecs
                 // get internal component arrays
                 void* ptrs[sizeof...(Indices)]
                 {
-                    (void*)archetype.getComponent(getTypeHash_<std::decay_t<typename traits::template arg<Indices>>>(), 0)...
+                    (void*)archetype.getComponent(getTypeHash_<std::decay_t<typename traits::template arg<Indices>>>(), 0).data()...
                 };
 
                 if constexpr (Parallel)
 #pragma omp parallel for
                     for (signed long long j = 0; j < archetype.getRowsCount(); j++)
-                    {
                         std::invoke(
                             std::forward<Func>(func),
                             // take indices from internal component arrays
                             ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
                         );
-                    }
                 else
                     for (size_t j = 0; j < archetype.getRowsCount(); j++)
-                    {
                         std::invoke(
                             std::forward<Func>(func),
                             // take indices from internal component arrays
                             ((std::decay_t<typename traits::template arg<Indices>>*)ptrs[Indices])[j]...
                         );
-                    }
             }
         }
 
@@ -471,6 +499,16 @@ namespace ecs
 
         size_t getTotalArchetypesCount() const { return _archetypes.size(); }
 
+        void abortIfEntityNotUpdated_(const Entity& entity)
+        {
+            if (entity.worldVer != _ver)
+            {
+                std::cerr << "version mismatch: " << entity.worldVer << " expected " << _ver << std::endl;
+                abort();
+            }
+        }
+
+
         Archetype& getOrCreateArchetype_(const std::vector<size_t>& hashes, const std::vector<size_t>& sizes)
         {
             const size_t hash = getHash_(hashes);
@@ -479,7 +517,7 @@ namespace ecs
                 return it->second;
 
             // create new archetype
-            const auto& insertion = _archetypes.insert({ hash, Archetype(sizes, hashes) });
+            const auto& insertion = _archetypes.insert({ hash, Archetype(hashes, sizes) });
             auto& archetype = insertion.first->second;
 
             // add to hash caches

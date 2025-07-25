@@ -166,16 +166,24 @@ static void test2()
     }
 }
 
-int main()
+void resetData()
 {
+    size_t c = 0;
+    world = ecs::World();
     for (size_t i = 0; i < count; i++)
     {
-        vec3s[i] = { rand(), rand(), rand() };
-        vec2s[i] = { rand(), rand() };
+        vec3s[i] = { c++, c++, c++ };
+        vec2s[i] = { c++, c++ };
         world.addEntity(vec3s[i], vec2s[i], size_t(0));
     }
+}
+
+int main()
+{
+    resetData();
     raw();
     test2();
+    resetData();
     rawParallel();
     test2Parallel();
 
@@ -256,7 +264,7 @@ int main()
     world.flushMarks();
     std::cout << "after removing multiples of 3...\n";
     std::vector<size_t> list;
-    world.executeParallel([&list](ecs::Entity entity, size_t i)
+    world.executeParallel([&list](ecs::Entity& entity, size_t i)
         {
             std::stringstream ss;
             ss << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " i: " << i << "\n";
@@ -269,12 +277,18 @@ int main()
 
 
     std::cout << "\ntesting adding and removing components\n\n";
+    std::cout << "archetype count: " << world.getTotalArchetypesCount() << " total entities: " << world.getTotalEntityCount() << "\n";
     world.addEntity(A(123));
-    //world.execute([&world](ecs::Entity& entity, A a)
-    //    {
-    //        std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
-    //        world.addComponents(entity, B(82));
-    //    });
+    std::cout << "after adding A\n";
+    std::cout << "archetype count: " << world.getTotalArchetypesCount() << " total entities: " << world.getTotalEntityCount() << "\n";
+    world.execute([&world](ecs::Entity& entity, A a)
+        {
+            std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
+            world.addComponents(entity, B(82));
+        });
+    world.flushMarks();
+    std::cout << "after adding B\n";
+    std::cout << "archetype count: " << world.getTotalArchetypesCount() << " total entities: " << world.getTotalEntityCount() << "\n";
     world.execute([&world](ecs::Entity& entity, A a)
         {
             std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
