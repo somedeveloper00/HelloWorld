@@ -167,7 +167,7 @@ static void test2()
     }
 }
 
-void resetData()
+static void resetData()
 {
     size_t c = 0;
     world = ecs::World();
@@ -206,7 +206,7 @@ int main()
     world.removeEntity(entity3);
     world.removeEntity(entity2);
     //world.markEntityForRemoval(entity6);
-    world.flushMarks();
+    world.flush();
     std::cout << "count: " << world.getTotalEntityCount() << " archetypes: " << world.getTotalArchetypesCount() << "\n";
 
     world.executeParallel([](glm::vec3& vec3, glm::vec2 vec2)
@@ -252,7 +252,7 @@ int main()
             if (i % 2 == 1)
                 world.removeEntity(entity);
         });
-    world.flushMarks();
+    world.flush();
     std::cout << "after removing odds...\n";
     world.executeParallel([&world](ecs::Entity& entity, size_t i)
         {
@@ -262,7 +262,7 @@ int main()
             if (i % 3 == 0)
                 world.removeEntity(entity);
         });
-    world.flushMarks();
+    world.flush();
     std::cout << "after removing multiples of 3...\n";
     std::vector<size_t> list;
     world.executeParallel([&list](ecs::Entity& entity, size_t i)
@@ -287,7 +287,7 @@ int main()
             std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << "\n";
             world.addComponents(entity, B(82));
         });
-    world.flushMarks();
+    world.flush();
     std::cout << "after adding B\n";
     std::cout << "archetype count: " << world.getTotalArchetypesCount() << " total entities: " << world.getTotalEntityCount() << "\n";
     world.execute([&world](ecs::Entity& entity, A a)
@@ -303,7 +303,7 @@ int main()
             std::cout << "archetype: " << entity.archetypeHash << " rowIndex: " << entity.rowIndex << " a: " << a.a << " b: " << b.b << "\n";
             world.removeComponents<A>(entity);
         });
-    world.flushMarks();
+    world.flush();
     std::cout << "after removing A\n";
     std::cout << "archetype count: " << world.getTotalArchetypesCount() << " total entities: " << world.getTotalEntityCount() << "\n";
     world.execute([&world](ecs::Entity& entity, A a)

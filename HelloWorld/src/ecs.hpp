@@ -215,120 +215,123 @@ namespace ecs
         const size_t worldVer;
     };
 
-    struct Archetype
+    namespace
     {
-        const size_t hash;
-        const std::unordered_map<size_t, size_t> _componentHashMap;
-        const std::vector<size_t> _componentHashes;
-        const std::vector<size_t> _componentSizes;
-        std::vector<std::vector<std::byte>> _componentRows;
-        std::vector<size_t> _toRemove; // sorted: least value at 0 largest at last
-
-        Archetype() : hash(), _componentHashMap(), _componentHashes(), _componentSizes(), _componentRows(), _toRemove() {}
-
-        // assumes hashes is sorted
-        Archetype(const std::vector<size_t>& hashes, const std::vector<size_t>& sizes) : hash(getHash_(hashes)), _componentHashMap(createComponentHashMap_(hashes)), _componentSizes(sizes), _componentHashes(hashes), _componentRows(), _toRemove()
+        struct Archetype
         {
-            _componentRows.reserve(hashes.size());
-            for (size_t i = 0; i < hashes.size(); i++)
-                _componentRows.push_back({});
-        }
+            const size_t hash;
+            const std::unordered_map<size_t, size_t> _componentHashMap;
+            const std::vector<size_t> _componentHashes;
+            const std::vector<size_t> _componentSizes;
+            std::vector<std::vector<std::byte>> _componentRows;
+            std::vector<size_t> _toRemove; // sorted: least value at 0 largest at last
 
-        std::span<std::byte> getComponent(const size_t hash, const size_t rowIndex)
-        {
-            const size_t index = _componentHashMap.at(hash);
-            const size_t size = _componentSizes[index];
-            std::byte* ptr = _componentRows[index].data();
-            return std::span<std::byte>(ptr + size * rowIndex, size);
-        }
+            Archetype() : hash(), _componentHashMap(), _componentHashes(), _componentSizes(), _componentRows(), _toRemove() {}
 
-        std::vector<std::span<std::byte>> getRow(const size_t rowIndex)
-        {
-            std::vector<std::span<std::byte>> result;
-            result.reserve(_componentSizes.size());
-            for (size_t i = 0; i < _componentSizes.size(); i++)
+            // assumes hashes is sorted
+            Archetype(const std::vector<size_t>& hashes, const std::vector<size_t>& sizes) : hash(getHash_(hashes)), _componentHashMap(createComponentHashMap_(hashes)), _componentSizes(sizes), _componentHashes(hashes), _componentRows(), _toRemove()
             {
-                auto component = getComponent(_componentHashes[i], rowIndex);
-                result.push_back(component);
+                _componentRows.reserve(hashes.size());
+                for (size_t i = 0; i < hashes.size(); i++)
+                    _componentRows.push_back({});
             }
-            return result;
-        }
 
-        // hashes' indices correspond to the components' indices
-        void add(const std::vector<std::span<std::byte>>& components, const std::vector<size_t>& hashes)
-        {
-            // per component (not per row)
-            for (size_t i = 0; i < hashes.size(); i++)
+            std::span<std::byte> getComponent(const size_t hash, const size_t rowIndex)
             {
-                const size_t hash = hashes[i];
-                const auto& addingRows = components[i];
-
                 const size_t index = _componentHashMap.at(hash);
                 const size_t size = _componentSizes[index];
-                auto& rows = _componentRows[index];
-
-                rows.reserve(rows.size() + addingRows.size());
-                rows.insert(rows.end(), addingRows.begin(), addingRows.end());
+                std::byte* ptr = _componentRows[index].data();
+                return std::span<std::byte>(ptr + size * rowIndex, size);
             }
-        }
 
-        void markForRemoval(const size_t rowIndex)
-        {
-            auto it = std::lower_bound(_toRemove.begin(), _toRemove.end(), rowIndex);
-            _toRemove.insert(it, rowIndex);
-        }
-
-        void flushMarks() { flushRemoves_(); }
-
-        size_t getRowsCount() const
-        {
-            return _componentRows[0].size() / _componentSizes[0];
-        }
-
-        void flushRemoves_()
-        {
-            if (_toRemove.size() == 0)
-                return;
-            // loop from largest-index to smallest-index
-            for (size_t i = _toRemove.size(); i-- > 0;)
+            std::vector<std::span<std::byte>> getRow(const size_t rowIndex)
             {
-                const size_t deleteIndex = _toRemove[i];
-                for (size_t j = 0; j < _componentRows.size(); j++)
+                std::vector<std::span<std::byte>> result;
+                result.reserve(_componentSizes.size());
+                for (size_t i = 0; i < _componentSizes.size(); i++)
                 {
-                    std::vector<std::byte>& rows = _componentRows[j];
-                    const size_t size = _componentSizes[j];
-                    // swap index with the last
-                    if (deleteIndex < rows.size() / size - 1)
-                        std::swap_ranges(
-                            /* first1 */  rows.begin() + deleteIndex * size,
-                            /* last1 */  rows.begin() + deleteIndex * size + size,
-                            /* first2 */ rows.end() - size);
-                    rows.resize(rows.size() - size);
+                    auto component = getComponent(_componentHashes[i], rowIndex);
+                    result.push_back(component);
+                }
+                return result;
+            }
+
+            // hashes' indices correspond to the components' indices
+            void add(const std::vector<std::span<std::byte>>& components, const std::vector<size_t>& hashes)
+            {
+                // per component (not per row)
+                for (size_t i = 0; i < hashes.size(); i++)
+                {
+                    const size_t hash = hashes[i];
+                    const auto& addingRows = components[i];
+
+                    const size_t index = _componentHashMap.at(hash);
+                    const size_t size = _componentSizes[index];
+                    auto& rows = _componentRows[index];
+
+                    rows.reserve(rows.size() + addingRows.size());
+                    rows.insert(rows.end(), addingRows.begin(), addingRows.end());
                 }
             }
 
-            _toRemove.clear();
-        }
+            void markForRemoval(const size_t rowIndex)
+            {
+                auto it = std::lower_bound(_toRemove.begin(), _toRemove.end(), rowIndex);
+                _toRemove.insert(it, rowIndex);
+            }
 
-        static std::unordered_map<size_t, size_t> createComponentHashMap_(const std::vector<size_t>& hashes)
-        {
-            std::unordered_map<size_t, size_t> result;
-            result.reserve(hashes.size());
-            for (size_t i = 0; i < hashes.size(); i++)
-                result[hashes[i]] = i;
-            return result;
-        }
+            void flushMarks() { flushRemoves_(); }
 
-        template<typename T>
-        static constexpr std::vector<T> appendTwoVectors_(const std::vector<T>& vec1, const std::vector<T>& vec2)
-        {
-            std::vector<T> result;
-            result.reserve(vec1.size() + vec2.size());
-            result.insert(result.end(), vec1.begin(), vec1.end());
-            result.insert(result.end(), vec1.begin(), vec1.end());
-            return result;
-        }
-    };
+            size_t getRowsCount() const
+            {
+                return _componentRows[0].size() / _componentSizes[0];
+            }
+
+            void flushRemoves_()
+            {
+                if (_toRemove.size() == 0)
+                    return;
+                // loop from largest-index to smallest-index
+                for (size_t i = _toRemove.size(); i-- > 0;)
+                {
+                    const size_t deleteIndex = _toRemove[i];
+                    for (size_t j = 0; j < _componentRows.size(); j++)
+                    {
+                        std::vector<std::byte>& rows = _componentRows[j];
+                        const size_t size = _componentSizes[j];
+                        // swap index with the last
+                        if (deleteIndex < rows.size() / size - 1)
+                            std::swap_ranges(
+                                /* first1 */  rows.begin() + deleteIndex * size,
+                                /* last1 */  rows.begin() + deleteIndex * size + size,
+                                /* first2 */ rows.end() - size);
+                        rows.resize(rows.size() - size);
+                    }
+                }
+
+                _toRemove.clear();
+            }
+
+            static std::unordered_map<size_t, size_t> createComponentHashMap_(const std::vector<size_t>& hashes)
+            {
+                std::unordered_map<size_t, size_t> result;
+                result.reserve(hashes.size());
+                for (size_t i = 0; i < hashes.size(); i++)
+                    result[hashes[i]] = i;
+                return result;
+            }
+
+            template<typename T>
+            static constexpr std::vector<T> appendTwoVectors_(const std::vector<T>& vec1, const std::vector<T>& vec2)
+            {
+                std::vector<T> result;
+                result.reserve(vec1.size() + vec2.size());
+                result.insert(result.end(), vec1.begin(), vec1.end());
+                result.insert(result.end(), vec1.begin(), vec1.end());
+                return result;
+            }
+        };
+    }
 
     struct World
     {
@@ -341,6 +344,7 @@ namespace ecs
         size_t _ver = 0;
         size_t _executingCount = 0;
 
+        // adds an entity right away
         template<typename... Ts>
         Entity addEntity(const Ts... components)
         {
@@ -369,6 +373,7 @@ namespace ecs
             };
         }
 
+        // removes an entity. needs a flush
         void removeEntity(const Entity& entity)
         {
             abortIfEntityNotUpdated_(entity);
@@ -376,7 +381,8 @@ namespace ecs
             archetype.markForRemoval(entity.rowIndex);
         }
 
-        void flushMarks()
+        // executes tasks awaiting a flush
+        void flush()
         {
             while (_executingCount != 0) {}
             for (auto& [_, archetype] : _archetypes)
@@ -384,6 +390,18 @@ namespace ecs
             _ver++;
         }
 
+        // returns whether this entity contains this component type
+        template<typename T>
+        bool componentExists(const Entity& entity)
+        {
+            abortIfEntityNotUpdated_(entity);
+            auto& archetype = _archetypes[entity.archetypeHash];
+            constexpr auto hash = getTypeHash_<T>();
+            return std::find(archetype._componentHashes.begin(), archetype._componentHashes.end(), hash) != archetype._componentHashes.end();
+        }
+
+        // returns a component from this entity
+        // assumes component exists in this entity (no error checking)
         template<typename T>
         T& getComponent(const Entity& entity)
         {
@@ -394,6 +412,7 @@ namespace ecs
             return *(T*)asByte.data();
         }
 
+        // adds components to the entity. needs a flush
         template<typename... Ts>
         void addComponents(const Entity& entity, const Ts... components)
         {
@@ -423,6 +442,7 @@ namespace ecs
             targetArchetype.add(row, unsortedHashes);
         }
 
+        // removes components from the entity. needs a flush
         template<typename... Ts>
         void removeComponents(const Entity& entity)
         {
@@ -444,6 +464,7 @@ namespace ecs
             targetArchetype.add(row, hashes);
         }
 
+        // executes function on this world's entities in multiple threads
         template<typename Func>
         constexpr void executeParallel(Func&& func)
         {
@@ -458,6 +479,7 @@ namespace ecs
             _executingCount--;
         }
 
+        // executes function on this world's entities
         template<typename Func>
         constexpr void execute(Func&& func)
         {
@@ -472,13 +494,23 @@ namespace ecs
             _executingCount--;
         }
 
+        size_t getTotalEntityCount() const
+        {
+            size_t r = 0;
+            for (auto& [_, archetype] : _archetypes)
+                r += archetype.getRowsCount();
+            return r;
+        }
+
+        size_t getTotalArchetypesCount() const { return _archetypes.size(); }
+
         template<bool Parallel, typename Func, size_t... Indices>
         void executeWithEntity_(Func&& func, std::index_sequence<Indices...>)
         {
             using traits = FunctionTraits<std::decay_t<Func>>;
             using args = typename traits::args;
             auto [hashes, sizes] = createSortedHashesAndSizes_<std::decay_t<typename traits::template arg<Indices + 1>>...>();
-            std::vector<Archetype*> archetypes = findArchetypesWithHashes(hashes);
+            std::vector<Archetype*> archetypes = findArchetypesWithHashes_(hashes);
             for (size_t i = 0; i < archetypes.size(); i++)
             {
                 Archetype& archetype = *archetypes[i];
@@ -520,7 +552,7 @@ namespace ecs
             using traits = FunctionTraits<std::decay_t<Func>>;
             using args = typename traits::args;
             auto [hashes, sizes] = createSortedHashesAndSizes_<std::decay_t<typename traits::template arg<Indices>>...>();
-            std::vector<Archetype*> archetypes = findArchetypesWithHashes(hashes);
+            std::vector<Archetype*> archetypes = findArchetypesWithHashes_(hashes);
             for (size_t i = 0; i < archetypes.size(); i++)
             {
                 Archetype& archetype = *archetypes[i];
@@ -547,16 +579,6 @@ namespace ecs
                         );
             }
         }
-
-        size_t getTotalEntityCount() const
-        {
-            size_t r = 0;
-            for (auto& [_, archetype] : _archetypes)
-                r += archetype.getRowsCount();
-            return r;
-        }
-
-        size_t getTotalArchetypesCount() const { return _archetypes.size(); }
 
         void abortIfEntityNotUpdated_(const Entity& entity) const
         {
@@ -590,7 +612,7 @@ namespace ecs
             return archetype;
         }
 
-        std::vector<Archetype*> findArchetypesWithHashes(const std::vector<size_t> hashes)
+        std::vector<Archetype*> findArchetypesWithHashes_(const std::vector<size_t> hashes)
         {
             const size_t hash = getHash_(hashes);
             const auto& it = _includeArchetypesCache.find(hash);
