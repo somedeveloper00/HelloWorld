@@ -17,13 +17,13 @@
     <ClCompile Include="src\GlslTypes.cpp">
       <Filter>Sources</Filter>
     </ClCompile>
-    <ClCompile Include="src\main.cpp">
-      <Filter>Sources</Filter>
-    </ClCompile>
     <ClCompile Include="src\stbi_image.cpp">
       <Filter>Sources</Filter>
     </ClCompile>
     <ClCompile Include="src\benchmark.cpp">
+      <Filter>Sources</Filter>
+    </ClCompile>
+    <ClCompile Include="src\entry.cpp">
       <Filter>Sources</Filter>
     </ClCompile>
   </ItemGroup>
@@ -52,7 +52,25 @@
     <ClInclude Include="src\Transform.hpp">
       <Filter>Headers</Filter>
     </ClInclude>
-    <ClInclude Include="src\ecs.hpp">
+    <ClInclude Include="src\core\input.hpp">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\log.hpp">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\refs.hpp">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\vector2.hpp">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ecs\ecs.hpp">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ecs\ecs_helpers.hpp">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\app.hpp">
       <Filter>Headers</Filter>
     </ClInclude>
   </ItemGroup>

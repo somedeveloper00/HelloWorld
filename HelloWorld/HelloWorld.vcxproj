@@ -11,15 +11,14 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\benchmark.cpp" />
-    <ClCompile Include="src\glad.c" />
-    <ClCompile Include="src\GlslTypes.cpp" />
-    <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\stbi_image.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="src\ecs.hpp" />
     <ClInclude Include="src\Camera.hpp" />
+    <ClInclude Include="src\core\app.hpp" />
+    <ClInclude Include="src\core\input.hpp" />
+    <ClInclude Include="src\core\log.hpp" />
+    <ClInclude Include="src\core\refs.hpp" />
+    <ClInclude Include="src\core\vector2.hpp" />
+    <ClInclude Include="src\ecs\ecs.hpp" />
+    <ClInclude Include="src\ecs\ecs_helpers.hpp" />
     <ClInclude Include="src\IO.hpp" />
     <ClInclude Include="src\Light.hpp" />
     <ClInclude Include="src\Math.hpp" />
@@ -27,6 +26,13 @@
     <ClInclude Include="src\Shader.hpp" />
     <ClInclude Include="src\stb_image.hpp" />
     <ClInclude Include="src\Transform.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\benchmark.cpp" />
+    <ClCompile Include="src\entry.cpp" />
+    <ClCompile Include="src\glad.c" />
+    <ClCompile Include="src\GlslTypes.cpp" />
+    <ClCompile Include="src\stbi_image.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
