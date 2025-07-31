@@ -43,7 +43,7 @@ namespace engine
     }
 
     template<typename... Args>
-    inline void log_error(const std::string& formatStr, Args&&... args)
+    inline void logError(const std::string& formatStr, Args&&... args)
     {
         log("[ENGINE ERROR] " + formatStr, std::forward<Args>(args)...);
     }

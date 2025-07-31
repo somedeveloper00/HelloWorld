@@ -1,20 +1,26 @@
+#pragma once
 #include <vector>
 #include <string>
 #include <chrono>
 #include <thread>
 #include <functional>
-#include "refs.hpp"
+#include <algorithm>
+#include "log.hpp"
 
 namespace engine
 {
     class entity;
     class application;
 
+    constexpr size_t notFound = (size_t)-1;
+
     class component
     {
         friend entity;
     public:
         virtual void update(const float deltaTime) {};
+
+        void remove() noexcept { _state = static_cast<State>(_state | State::Removing); }
 
     private:
         enum State : uint8_t
@@ -23,7 +29,7 @@ namespace engine
             Removing = 1 << 0
         };
 
-        ref<entity> _entity;
+        std::weak_ptr<entity> _entity;
         State _state = State::Active;
 
         bool awaitingRemoval_() const { return _state & State::Removing; }
@@ -33,48 +39,164 @@ namespace engine
     {
         friend application;
     public:
-        std::string name = "New Entity";
-        std::vector<ref<entity>> children{};
-        ref<entity> parent{};
+        std::string name;
 
-        entity() { _selfRef = this; }
-
-        template<typename T, typename... Args, std::enable_if_t<std::constructible_from<T, Args...>, int> = 0>
-        T& addComponent(Args&&... args)
+        static inline std::shared_ptr<entity> create(std::string&& name = "New Entity")
         {
-            T* component = new T(std::forward<Args>(args)...);
+            entity* newEntity = new entity(std::move(name));
+            std::shared_ptr<entity> sharedPtr{ newEntity };
+            _rootEntities.push_back(sharedPtr);
+            newEntity->_selfRef = sharedPtr;
+            _newEntities.push_back(sharedPtr);
+            return sharedPtr;
+        }
+
+        static inline std::vector<std::shared_ptr<entity>> getRootEntities() noexcept { return _rootEntities; }
+
+        std::vector<std::shared_ptr<entity>> getChildren() const noexcept { return _children; }
+
+        std::shared_ptr<entity> getParent() const noexcept { return _parent; }
+
+        void setParent(const std::shared_ptr<entity> parent)
+        {
+            if (_parent.get() && !parent.get())
+            {
+                _rootEntities.push_back(_selfRef.lock());
+                _parent->removeFromChildren_(this);
+            }
+            else if (!_parent.get() && parent.get())
+            {
+                for (size_t i = 0; i < _rootEntities.size(); i++)
+                    if (_rootEntities[i].get() == this)
+                    {
+                        _rootEntities.erase(_rootEntities.begin() + i);
+                        break;
+                    }
+                parent->_children.push_back(_selfRef.lock());
+            }
+            _parent = parent;
+        }
+
+        template<typename T, typename... Args, std::enable_if_t<std::constructible_from<T, Args...>&& std::is_base_of_v<component, T>, int> = 0>
+        std::shared_ptr<T> addComponent(Args&&... args)
+        {
+            std::shared_ptr<T> component{ new T(std::forward<Args>(args)...) };
             component->_entity = _selfRef;
             _newComponents.push_back(component);
-            return *component;
+            return component;
+        }
+
+        template<typename T, std::enable_if_t<std::is_base_of_v<component, T>, int> = 0>
+        std::shared_ptr<T> getComponent() const
+        {
+            for (size_t i = 0; i < _components.size(); i++)
+                if (dynamic_cast<T*>(_components[i].get()))
+                    return _components[i];
+            return std::shared_ptr<T>();
+        }
+
+        template<typename T, std::enable_if_t<std::is_base_of_v<component, T>, int> = 0>
+        void getComponents(std::vector<std::shared_ptr<T>>& vector)
+        {
+            for (size_t i = 0; i < _components.size(); i++)
+                if (dynamic_cast<T*>(_components[i].get()))
+                    vector.push_back(_components[i]);
+        }
+
+        bool isSelfActive() const noexcept { return _active; }
+
+        bool isHierarchyActive() const noexcept { return !_removing && _hierarchyActive; }
+
+        void setActive(const bool active)
+        {
+            _active = active;
+            setHierarchyActive_(active);
+        }
+
+        size_t getSiblindIndex() const
+        {
+            if (!_parent.get())
+                return notFound;
+            for (size_t i = 0; i < _parent->_children.size(); i++)
+                if (_parent->_children[i].get() == this)
+                    return i;
+            return notFound;
+        }
+
+        void setSiblingIndex(size_t index) const
+        {
+            if (!_parent.get())
+            {
+                logWarning("trying to set the siblind of entity \"{}\" which does not have parent", name);
+                return;
+            }
+            for (size_t i = 0; i < _parent->_children.size(); i++)
+                if (_parent->_children[i].get() == this)
+                {
+                    if (i == index)
+                        break;
+                    std::shared_ptr<entity> item = std::move(_parent->_children[i]);
+                    _parent->_children.erase(_parent->_children.begin() + i);
+                    if (index > i)
+                        index--;
+                    _parent->_children.insert(_parent->_children.begin() + index, std::move(item));
+                    break;
+                }
         }
 
     private:
-        static inline std::vector<entity*> _entities;
+        static inline std::vector<std::shared_ptr<entity>> _entities;
+        static inline std::vector<std::shared_ptr<entity>> _newEntities;
+        static inline std::vector<std::shared_ptr<entity>> _rootEntities;
 
-        std::vector<refOwn<component>> _components{};
-        std::vector<component*> _newComponents{};
-        refOwn<entity> _selfRef;
+        std::vector<std::shared_ptr<component>> _components{};
+        std::vector<std::shared_ptr<component>> _newComponents{};
+        std::vector<std::shared_ptr<entity>> _children{};
+        std::weak_ptr<entity> _selfRef;
+        std::shared_ptr<entity> _parent{};
+        bool _removing = false;
+        bool _active = true;
+        bool _hierarchyActive = true;
+
+        entity(std::string&& name) : name(std::move(name)) {}
 
         void update(const float deltaTime)
         {
             for (auto& component : _components)
-                component.get()->update(deltaTime);
+                component->update(deltaTime);
         }
 
         void addNewComponents()
         {
-            for (auto* component : _newComponents)
-                _components.push_back(component);
+            for (auto& component : _newComponents)
+                _components.push_back(std::move(component));
             _newComponents.clear();
         }
 
         void removeComponents()
         {
-            auto r = std::remove_if(_components.begin(), _components.end(), [](refOwn<component>& comp)
+            auto r = std::remove_if(_components.begin(), _components.end(), [](std::shared_ptr<component>& comp)
                 {
-                    return comp.get()->awaitingRemoval_();
+                    return comp->awaitingRemoval_();
                 });
             _components.erase(r, _components.end());
+        }
+
+        void setHierarchyActive_(const bool active)
+        {
+            _hierarchyActive = active;
+            for (auto& child : _children)
+                child->setHierarchyActive_(active);
+        }
+
+        void removeFromChildren_(entity* entity)
+        {
+            for (size_t i = 0; i < _children.size(); i++)
+                if (_children[i].get() == entity)
+                {
+                    _children.erase(_children.begin() + i);
+                    return;
+                }
         }
     };
 
@@ -82,15 +204,21 @@ namespace engine
     {
         friend application;
     public:
+        time() = delete;
         static inline int getTargetFps() noexcept { return _targetFps; }
+
         static inline void setTargetFps(const int targetFps) noexcept
         {
             _targetFps = targetFps;
             _targetDelay = std::chrono::duration < float>(1 / _targetFps);
         }
+
         static inline float getTotalTime() noexcept { return _totalTime; }
+
         static inline float getDeltaTime() noexcept { return _deltaTime; }
+
         static inline size_t getTotalFrames() noexcept { return _totalFrames; }
+
         static inline float getLastFrameSleepTime() noexcept { return _lastFrameSleep.count(); }
 
     private:
@@ -105,9 +233,10 @@ namespace engine
     class application
     {
     public:
-        static inline void run(std::vector<entity*>&& entities)
+        application() = delete;
+
+        static inline void run()
         {
-            entity::_entities = std::move(entities);
             _isRunning = true;
 
             auto lastFrameTime = std::chrono::high_resolution_clock::now();
@@ -124,16 +253,34 @@ namespace engine
                 for (auto& func : _preComponentHooks)
                     std::invoke(func);
 
-                for (auto* entities : entity::_entities)
+                for (auto& entities : entity::_entities)
                     entities->update(time::_deltaTime);
-                for (auto* entities : entity::_entities)
-                    entities->addNewComponents();
-                for (auto* entities : entity::_entities)
+                for (auto& entities : entity::_entities)
                     entities->removeComponents();
+                for (auto& entities : entity::_entities)
+                    entities->addNewComponents();
+
+                { // remove entities
+                    auto newEnd = std::remove_if(entity::_entities.begin(), entity::_entities.end(), [](std::shared_ptr<entity>& entity)
+                        {
+                            return entity->_removing;
+                        });
+                    std::for_each(newEnd, entity::_entities.end(), [](std::shared_ptr<entity>& ptr)
+                        {
+                            ptr->_parent->removeFromChildren_(ptr.get());
+                        });
+                    entity::_entities.erase(newEnd, entity::_entities.end());
+                }
+
+                // add entities
+                for (auto& entity : entity::_newEntities)
+                    entity::_entities.push_back(std::move(entity));
+                entity::_newEntities.clear();
 
                 for (auto& func : _postLoopExecutes)
                     std::invoke(func);
 
+                // frame-rate consistency
                 auto now = std::chrono::high_resolution_clock::now();
                 auto diff = std::chrono::duration<float>(now - currentFrameTime);
                 time::_lastFrameSleep = time::_targetDelay - diff;
