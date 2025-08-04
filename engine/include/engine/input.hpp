@@ -1,12 +1,18 @@
 #pragma once
 #include <cstdint>
 #include <array>
-#include "vector2.hpp"
+#include "engine/app.hpp"
+#include "log.hpp"
+
+#if WIN32
 #include <Windows.h>
+#else
+#error "platform not supported"
+#endif
 
 namespace engine
 {
-    class input
+    class input final
     {
     public:
         enum class key : uint8_t
@@ -39,9 +45,17 @@ namespace engine
             Count
         };
 
-        // initializes input system
         static inline void initialize()
         {
+            static bool s_initialized = false;
+            if (s_initialized)
+            {
+                logError("window already initialized");
+                return;
+            }
+            s_initialized = true;
+
+            // for console keyboard input
             HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
             DWORD mode;
             GetConsoleMode(hStdin, &mode);

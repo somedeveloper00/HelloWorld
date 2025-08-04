@@ -6,7 +6,7 @@ namespace engine
 {
     template <typename T>
         requires std::is_arithmetic_v<T>
-    struct vector2
+    struct vector2 final
     {
         T x;
         T y;
