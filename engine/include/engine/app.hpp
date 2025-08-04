@@ -1,11 +1,16 @@
 #pragma once
-#include "log.hpp"
+
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "engine/log.hpp"
+#include "log.hpp"
 
 namespace engine
 {
@@ -104,6 +109,8 @@ class entity
     void remove() noexcept
     {
         _removing = true;
+        for (auto &child : _children)
+            child->remove();
     }
 
     void setParent(const std::shared_ptr<entity> parent)
@@ -183,7 +190,10 @@ class entity
     {
         if (!_parent.get())
         {
-            logWarning("trying to set the siblind of entity \"{}\" which does not have parent", name);
+            logWarning("trying to set the siblind of entity \"{}\" which does "
+                       "not have "
+                       "parent",
+                       name);
             return;
         }
         for (size_t i = 0; i < _parent->_children.size(); i++)
@@ -333,10 +343,24 @@ class application
                 entities->addNewComponents();
 
             { // remove entities
-                auto newEnd = std::remove_if(entity::_entities.begin(), entity::_entities.end(),
-                                             [](std::shared_ptr<entity> &entity) { return entity->_removing; });
-                std::for_each(newEnd, entity::_entities.end(),
-                              [](std::shared_ptr<entity> &ptr) { ptr->_parent->removeFromChildren_(ptr.get()); });
+                auto callback = [](std::shared_ptr<entity> &testEntity) {
+                    if (testEntity->_removing)
+                    {
+                        if (testEntity->_parent)
+                            testEntity->_parent->removeFromChildren_(testEntity.get());
+
+                        // remove from roots
+                        auto it = std::find_if(
+                            entity::_rootEntities.begin(), entity::_rootEntities.end(),
+                            [&testEntity](const std::shared_ptr<entity> &other) { return other == testEntity; });
+                        if (it != entity::_rootEntities.end())
+                            entity::_rootEntities.erase(it);
+
+                        return true;
+                    }
+                    return false;
+                };
+                auto newEnd = std::remove_if(entity::_entities.begin(), entity::_entities.end(), callback);
                 entity::_entities.erase(newEnd, entity::_entities.end());
             }
 

@@ -1,7 +1,9 @@
 #pragma once
 
+#include "benchmark.hpp"
 #include "engine/app.hpp"
 #include "engine/input.hpp"
+#include "engine/log.hpp"
 
 namespace
 {
@@ -14,8 +16,6 @@ static inline void createRandomEntities_(const size_t count)
         auto parent = r == engine::entity::getEntitiesCount() ? nullptr : engine::entity::getEntityAt(r);
         auto newEntity = engine::entity::create("random " + std::to_string(++id));
         newEntity->setParent(parent);
-        engine::logInfo("created \"{}\" under \"{}\"", newEntity->name,
-                        parent.get() == nullptr ? "null" : parent->name);
     }
 }
 
@@ -34,13 +34,14 @@ static inline void deleteRandomEntities_(const size_t count)
 
 static inline void debugShortcuts_()
 {
-    static engine::input::key close = engine::input::key::escape;
-    static engine::input::key fps = engine::input::key::f;
-    static engine::input::key hierarchy = engine::input::key::h;
-    static engine::input::key createRandom = engine::input::key::r;
-    static engine::input::key deleteRandom = engine::input::key::d;
-    static int createRandomCount = 10;
-    static int deleteRandomCount = 5;
+    static auto close = engine::input::key::escape;
+    static auto fps = engine::input::key::f;
+    static auto hierarchy = engine::input::key::h;
+    static auto createRandom = engine::input::key::a;
+    static auto deleteRandom = engine::input::key::d;
+    static auto createRandomCount = 10;
+    static auto createRandomHugeCount = 1000;
+    static auto deleteRandomCount = 5;
 
     if (engine::input::isKeyJustDown(close))
     {
@@ -48,10 +49,10 @@ static inline void debugShortcuts_()
     }
     else if (engine::input::isKeyJustDown(fps))
     {
-        engine::log("frame: {} fps: {} dt: {} slept: {} targetFps: {} frame-use: %{}", engine::time::getTotalFrames(),
-                    1 / engine::time::getDeltaTime(), engine::time::getDeltaTime(),
-                    engine::time::getLastFrameSleepTime(), engine::time::getTargetFps(),
-                    100 - ((engine::time::getLastFrameSleepTime()) / (1.f / engine::time::getTargetFps()) * 100));
+        engine::logInfo("frame: {} fps: {} dt: {} slept: {} targetFps: {} frame-use: %{}",
+                        engine::time::getTotalFrames(), 1 / engine::time::getDeltaTime(), engine::time::getDeltaTime(),
+                        engine::time::getLastFrameSleepTime(), engine::time::getTargetFps(),
+                        100 - ((engine::time::getLastFrameSleepTime()) / (1.f / engine::time::getTargetFps()) * 100));
     }
     else if (engine::input::isKeyJustDown(hierarchy))
     {
@@ -110,10 +111,23 @@ static inline void debugShortcuts_()
             }
         }
     }
+    else if (engine::input::isKeyHeldDown(engine::input::key::shift) && engine::input::isKeyJustDown(createRandom))
+    {
+        auto b = benchmark("add-huge");
+        createRandomEntities_(createRandomHugeCount);
+        engine::logInfo("created {} entities", createRandomHugeCount);
+    }
     else if (engine::input::isKeyJustDown(createRandom))
+    {
+        auto b = benchmark("add");
         createRandomEntities_(createRandomCount);
+        engine::logInfo("created {} entities", createRandomCount);
+    }
     else if (engine::input::isKeyJustDown(deleteRandom))
+    {
+        auto b = benchmark("remove");
         deleteRandomEntities_(deleteRandomCount);
+    }
 }
 } // namespace
 
