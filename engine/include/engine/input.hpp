@@ -1,6 +1,6 @@
 #pragma once
-#include "engine/app.hpp"
-#include "engine/benchmark.hpp"
+#include "app.hpp"
+#include "benchmark.hpp"
 #include "log.hpp"
 #include <array>
 #include <cstdint>
@@ -16,127 +16,21 @@ namespace engine
 class input final
 {
   public:
+    // clang-format off
     enum class key : uint8_t
     {
         unknown = 0,
-        key1,
-        key2,
-        key3,
-        key4,
-        key5,
-        key6,
-        key7,
-        key8,
-        key9,
-        key0,
-        a,
-        b,
-        c,
-        d,
-        e,
-        f,
-        g,
-        h,
-        i,
-        j,
-        k,
-        l,
-        m,
-        n,
-        o,
-        p,
-        q,
-        r,
-        s,
-        t,
-        u,
-        v,
-        w,
-        x,
-        y,
-        z,
-        num0,
-        num1,
-        num2,
-        num3,
-        num4,
-        num5,
-        num6,
-        num7,
-        num8,
-        num9,
-        f0,
-        f1,
-        f2,
-        f3,
-        f4,
-        f5,
-        f6,
-        f7,
-        f8,
-        f9,
-        f10,
-        f11,
-        f12,
-        f13,
-        f14,
-        f15,
-        f16,
-        f17,
-        f18,
-        f19,
-        f20,
-        f21,
-        f22,
-        f23,
-        f24,
-        escape,
-        space,
-        enter,
-        tab,
-        backspace,
-        shift,
-        leftShift,
-        rightShift,
-        control,
-        leftControl,
-        rightControl,
-        alt,
-        leftAlt,
-        rightAlt,
-        del,
-        left,
-        right,
-        up,
-        down,
 
-        gamePadA,
-        gamePadB,
-        gamePadX,
-        gamePadY,
-        gamePadRightShoulder,
-        gamePadLeftShoulder,
-        gamePadLeftTrigger,
-        gamePadRightTrigger,
-        gamePadDpadUp,
-        gamePadDpadDown,
-        gamePadDpadLeft,
-        gamePadDpadRight,
-        gamePadMenu,
-        gamePadView,
-        gamePadLeftThumbstickButton,
-        gamePadRightThumbstickButton,
-        gamePadLeftThumbstickUp,
-        gamePadLeftThumbstickDown,
-        gamePadLeftThumbstickRight,
-        gamePadLeftThumbstickLeft,
-        gamePadRightThumbstickUp,
-        gamePadRightThumbstickDown,
-        gamePadRightThumbstickRight,
-        gamePadRightThumbstickLeft,
+        key1, key2, key3, key4, key5, key6, key7, key8, key9, key0, 
+        a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, 
+        num0, num1, num2, num3, num4, num5, num6, num7, num8, num9, 
+        f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, 
+        escape, space, enter, tab, backspace, shift, leftShift, rightShift, control, leftControl, rightControl, alt, leftAlt, rightAlt, del, left, right, up, down, 
+        gamePadA, gamePadB, gamePadX, gamePadY, gamePadRightShoulder, gamePadLeftShoulder, gamePadLeftTrigger, gamePadRightTrigger, gamePadDpadUp, gamePadDpadDown, gamePadDpadLeft, gamePadDpadRight, gamePadMenu, gamePadView, gamePadLeftThumbstickButton, gamePadRightThumbstickButton, gamePadLeftThumbstickUp, gamePadLeftThumbstickDown, gamePadLeftThumbstickRight, gamePadLeftThumbstickLeft, gamePadRightThumbstickUp, gamePadRightThumbstickDown, gamePadRightThumbstickRight, gamePadRightThumbstickLeft, 
 
         count
     };
+    // clang-format on
 
     enum class state : uint8_t
     {
@@ -159,7 +53,7 @@ class input final
         static bool s_initialized = false;
         if (s_initialized)
         {
-            engine::log::logError("window already initialized");
+            log::logError("window already initialized");
             return;
         }
         s_initialized = true;
@@ -171,7 +65,7 @@ class input final
         mode &= ~ENABLE_QUICK_EDIT_MODE;
         SetConsoleMode(hStdin, mode);
 
-        engine::application::addPreComponentHook(internal_tick_);
+        application::addPreComponentHook(internal_tick_);
     }
 
     static inline state getKeyState(const key key)
