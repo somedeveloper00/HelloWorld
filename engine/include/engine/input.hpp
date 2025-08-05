@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/app.hpp"
+#include "engine/benchmark.hpp"
 #include "log.hpp"
 #include <array>
 #include <cstdint>
@@ -154,10 +155,11 @@ class input final
 
     static inline void initialize()
     {
+        bench(__FUNCTION__);
         static bool s_initialized = false;
         if (s_initialized)
         {
-            logError("window already initialized");
+            engine::log::logError("window already initialized");
             return;
         }
         s_initialized = true;

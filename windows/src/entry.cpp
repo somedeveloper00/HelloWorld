@@ -1,9 +1,11 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include "debugShortcuts.hpp"
 #include "engine/app.hpp"
+#include "engine/graphics.hpp"
 #include "engine/input.hpp"
 #include "engine/log.hpp"
-#include "engine/memory.hpp"
-#include "engine/window.hpp"
 
 class printHelloOnKey : public engine::component
 {
@@ -12,24 +14,15 @@ class printHelloOnKey : public engine::component
     void update(const float deltaTime)
     {
         if (engine::input::isKeyJustDown(key))
-            engine::logInfo("Hello World!");
+            engine::log::logInfo("Hello World!");
     }
 };
 
-static void memReport(std::string label)
-{
-    engine::logInfo("[{}] init mem: {}kb", label, engine::memory::getTotalMemory() / 1024);
-}
-
 int main()
 {
-    memReport("init");
+    engine::log::initialize();
     engine::input::initialize();
-    memReport("engine::input::initialize()");
-    engine::window::initialize("Hello Enigne!", {100, 100}, {200, 200}, false, false);
-    memReport("engine::window::initialize");
+    engine::graphics::initialize("Hello Enigne!", {100, 100}, {200, 200}, false, false);
     initializeDebugShortcuts();
-    memReport("initializeDebugShortcuts()");
     engine::application::run();
-    memReport("end");
 }

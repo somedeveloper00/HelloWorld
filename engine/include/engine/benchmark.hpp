@@ -1,7 +1,10 @@
 #pragma once
-#include "engine/log.hpp"
+
+#include "log.hpp"
 #include <chrono>
 
+namespace engine
+{
 struct benchmark final
 {
     benchmark(const std::string &label) : label(label), _startTime(std::chrono::high_resolution_clock::now())
@@ -20,7 +23,7 @@ struct benchmark final
     {
         auto now = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - _startTime).count();
-        engine::logInfo(Format, elapsed / 1000.f / 1000.f, label);
+        engine::log::logInfo(Format, elapsed / 1000.f / 1000.f, label);
     }
 
   private:
@@ -28,3 +31,10 @@ struct benchmark final
     const std::string label;
     const std::chrono::high_resolution_clock::time_point _startTime;
 };
+} // namespace engine
+
+#define __benchmark_mix_paste_(a, b) a##b
+#define __benchmark_mix_(a, b) __benchmark_mix_paste_(a, b)
+
+// perform benchmark on the current context (use this if you want to use a custom label)
+#define bench(label) engine::benchmark __benchmark_mix_(bench_, __LINE__){std::string(__FILE__) + ":" + label};

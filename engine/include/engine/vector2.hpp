@@ -40,7 +40,7 @@ struct vector2 final
             return vector2(x / scalar, y / scalar);
         else
         {
-            static_assert(scalar == 0, "Division by zero for integral types is undefined.");
+            static_assert(scalar != 0, "Division by zero for integral types is undefined.");
             return vector2(x / scalar, y / scalar);
         }
     }

@@ -5,5 +5,8 @@ target_include_directories(engine INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 
+# link to opengl and glad
+target_link_libraries(engine INTERFACE glad ${OPENGL_gl_LIBRARY})
+
 # for IDE intellisense
 target_sources(engine INTERFACE)

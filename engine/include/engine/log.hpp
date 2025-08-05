@@ -1,85 +1,83 @@
 #pragma once
 
-#include <cstdint>
 #include <cstdio>
 #include <format>
-#include <functional>
 #include <stdio.h>
 #include <string>
 
 #ifdef _WIN32
-#include <io.h>
+#include <corecrt_io.h>
+#include <windows.h>
 #else
 #error "platform not supported"
 #endif
 
 namespace engine
 {
-
-enum logType : int8_t
+class log final
 {
-    info,
-    warning,
-    error
-};
-using logHandler = void (*)(const logType type, const std::string &);
+  public:
+    using logHandler = void (*)(const std::string &);
 
-static inline bool isConnectedToTerminal()
-{
-#ifdef _WIN32
-    return _isatty(_fileno(stdout));
-#endif
-}
+    // current info log handler in use
+    static inline logHandler infoLogHandle = nullptr;
+    // current info log handler in use
+    static inline logHandler warningLogHandle = nullptr;
+    // current info log handler in use
+    static inline logHandler errorLogHandle = nullptr;
 
-// internal log handler storage
-inline logHandler &getLogHandler()
-{
-    static logHandler handler = [](const logType type, const std::string &msg) {
-        switch (type)
+    template <typename... Args> static inline void logInfo(const std::string &formatStr, Args &&...args)
+    {
+        infoLogHandle("[ENGINE INFO] " + std::vformat(formatStr, std::make_format_args(args...)));
+    }
+
+    template <typename... Args> static inline void logWarning(const std::string &formatStr, Args &&...args)
+    {
+        warningLogHandle("[ENGINE WARNING] " + std::vformat(formatStr, std::make_format_args(args...)));
+    }
+
+    template <typename... Args> static inline void logError(const std::string &formatStr, Args &&...args)
+    {
+        errorLogHandle("[ENGINE ERROR] " + std::vformat(formatStr, std::make_format_args(args...)));
+    }
+
+    static inline void initialize()
+    {
+        static bool s_initialized = false;
+        if (s_initialized)
         {
-        case info:
-            fputs("\033[1;32m", stdout);
-            fputs(msg.c_str(), stdout);
-            fputs("\033[0m\n", stdout);
-            break;
-        case warning:
-            fputs("\033[1;33m", stdout);
-            fputs(msg.c_str(), stdout);
-            fputs("\033[0m\n", stdout);
-            break;
-        case error:
-            fputs("\033[1;31m", stdout);
-            fputs(msg.c_str(), stdout);
-            fputs("\033[0m\n", stdout);
-            break;
+            logError("log already initialized");
+            return;
         }
+        infoLogHandle = defaultInfoLogHandle;
+        warningLogHandle = defaultWarningLogHandle;
+        errorLogHandle = defaultErrorLogHandle;
+        s_initialized = true;
+    }
+
+    // uses isatty
+    static inline bool isConnectedToTerminal()
+    {
+#ifdef _WIN32
+        return _isatty(_fileno(stdout));
+#endif
+    }
+
+  private:
+    static inline auto defaultInfoLogHandle = [](const std::string &msg) {
+        fputs("\033[1;32m", stdout);
+        fputs(msg.c_str(), stdout);
+        fputs("\033[1;0m\n", stdout);
     };
-    return handler;
-}
-
-// set a custom log handler
-inline void setLogHandler(logHandler customHandler)
-{
-    getLogHandler() = customHandler;
-}
-
-template <typename... Args> inline void log(const logType type, const std::string &formatStr, Args &&...args)
-{
-    const std::string msg = std::vformat(formatStr, std::make_format_args(args...));
-    getLogHandler()(type, msg);
-}
-template <typename... Args> inline void logInfo(const std::string &formatStr, Args &&...args)
-{
-    log(logType::info, "[ENGINE INFO] " + formatStr, std::forward<Args>(args)...);
-}
-
-template <typename... Args> inline void logWarning(const std::string &formatStr, Args &&...args)
-{
-    log(logType::warning, "[ENGINE WARNING] " + formatStr, std::forward<Args>(args)...);
-}
-
-template <typename... Args> inline void logError(const std::string &formatStr, Args &&...args)
-{
-    log(logType::error, "[ENGINE ERROR] " + formatStr, std::forward<Args>(args)...);
-}
+    static inline auto defaultWarningLogHandle = [](const std::string &msg) {
+        fputs("\033[1;33m", stdout);
+        fputs(msg.c_str(), stdout);
+        fputs("\033[1;0m\n", stdout);
+    };
+    static inline auto defaultErrorLogHandle = [](const std::string &msg) {
+        fputs("\033[1;31m", stdout);
+        fputs(msg.c_str(), stdout);
+        fputs("\033[1;0m\n", stdout);
+    };
+};
 } // namespace engine

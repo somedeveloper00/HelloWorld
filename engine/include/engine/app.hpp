@@ -9,7 +9,6 @@
 #include <thread>
 #include <vector>
 
-#include "engine/log.hpp"
 #include "log.hpp"
 
 namespace engine
@@ -190,10 +189,10 @@ class entity
     {
         if (!_parent.get())
         {
-            logWarning("trying to set the siblind of entity \"{}\" which does "
-                       "not have "
-                       "parent",
-                       name);
+            engine::log::logWarning("trying to set the siblind of entity \"{}\" which does "
+                                    "not have "
+                                    "parent",
+                                    name);
             return;
         }
         for (size_t i = 0; i < _parent->_children.size(); i++)
