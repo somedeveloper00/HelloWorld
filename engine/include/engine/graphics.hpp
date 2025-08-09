@@ -17,8 +17,6 @@
 #include <winerror.h>
 #include <wingdi.h>
 #include <winuser.h>
-
-#pragma comment(lib, "dwmapi.lib")
 #endif
 
 namespace engine
@@ -26,8 +24,7 @@ namespace engine
 class graphics final
 {
   public:
-    static inline void initialize(
-        std::string name, const vector2<size_t> center, const vector2<size_t> size, bool useMica, bool useAcrylic)
+    static inline void initialize(std::string name, const vector2<size_t> center, const vector2<size_t> size, bool useMica, bool useAcrylic)
     {
         bench(__FUNCTION__);
         static bool _initialized = false;
@@ -39,18 +36,16 @@ class graphics final
         _initialized = true;
         _name = name;
 
-        _handle = createWindow_(_name.c_str(), center, size, useMica, useAcrylic);
-        _hdc = GetDC(_handle);
+        createWindow_(_name.c_str(), center, size, useMica, useAcrylic);
         application::addPreComponentHook(tick_);
     }
 
   private:
     static inline std::string _name;
-#ifdef WIN32
-    static inline HWND _handle;
-#endif
     static inline MSG _msg{};
-    static inline HDC _hdc;
+#ifdef WIN32
+    static inline HWND _hwnd;
+#endif
     static inline HGLRC _openglContext;
 
     static inline void tick_()
@@ -62,10 +57,12 @@ class graphics final
             TranslateMessage(&_msg);
             DispatchMessageW(&_msg);
         }
-        RedrawWindow(_handle, NULL, NULL, RDW_INVALIDATE | RDW_INTERNALPAINT);
+
+        // trigger redraw
+        RedrawWindow(_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_INTERNALPAINT);
     }
 
-    static inline HWND createWindow_(const char *name, const vector2<size_t> center, const vector2<size_t> size, bool useMica, bool useAcrylic)
+    static inline void createWindow_(const char *name, const vector2<size_t> center, const vector2<size_t> size, bool useMica, bool useAcrylic)
     {
 #ifdef WIN32
         WNDCLASS wc{};
@@ -96,11 +93,10 @@ class graphics final
 
         ShowWindow(hwnd, SW_SHOWNORMAL);
         UpdateWindow(hwnd);
-        return hwnd;
 #endif
     }
 
-    static inline void setupOpengl_()
+    static inline void setupOpengl_(HDC dc)
     {
         // create a dummy window to be able to use wglChoosePixelFormatARB
         WNDCLASS dummyClass = {
@@ -147,7 +143,7 @@ class graphics final
 
         // load GLAD's GL and WGL pointers
         assert(gladLoaderLoadGL() && "gladLoaderLoadGL failed");
-        assert(gladLoaderLoadWGL(_hdc) && "gladLoadWGL failed"); // load WGL extensions with GLAD
+        assert(gladLoaderLoadWGL(dc) && "gladLoadWGL failed"); // load WGL extensions with GLAD
 
         // test GLAD's GL pointers and print specs
         log::logInfo("opengl version: {}", (char *)glGetString(GL_VERSION));
@@ -174,12 +170,12 @@ class graphics final
         };
         int piFormat;
         UINT numFormats;
-        wglChoosePixelFormatARB(_hdc, pixelFormatAttribs, NULL, 1, &piFormat, &numFormats);
+        wglChoosePixelFormatARB(dc, pixelFormatAttribs, NULL, 1, &piFormat, &numFormats);
         assert(numFormats && "wglChoosePixelFormatARB failed");
 
         PIXELFORMATDESCRIPTOR lppfd;
-        assert(DescribePixelFormat(_hdc, piFormat, sizeof(lppfd), &lppfd) && "DescribePixelFormat failed");
-        assert(SetPixelFormat(_hdc, piFormat, &lppfd) && "SetPixelFormat failed");
+        assert(DescribePixelFormat(dc, piFormat, sizeof(lppfd), &lppfd) && "DescribePixelFormat failed");
+        assert(SetPixelFormat(dc, piFormat, &lppfd) && "SetPixelFormat failed");
 
         // create context
         int attribList[]{
@@ -188,8 +184,8 @@ class graphics final
             // WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
             0 // end
         };
-        assert((_openglContext = wglCreateContextAttribsARB(_hdc, NULL, attribList)) && "wglCreateContextAttribsARB failed");
-        wglMakeCurrent(_hdc, _openglContext);
+        assert((_openglContext = wglCreateContextAttribsARB(dc, NULL, attribList)) && "wglCreateContextAttribsARB failed");
+        wglMakeCurrent(dc, _openglContext);
 
         glEnable(GL_DEPTH_TEST);
     }
@@ -203,12 +199,15 @@ class graphics final
 #ifdef WIN32
     static inline LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
+        _hwnd = hwnd; // cache for the other iters outside of this context
         switch (msg)
         {
-        case WM_CREATE:
-            _hdc = GetDC(hwnd);
-            setupOpengl_();
+        case WM_CREATE: {
+            auto dc = GetDC(hwnd);
+            setupOpengl_(dc);
+            ReleaseDC(hwnd, dc);
             break;
+        }
         case WM_SIZE:
             updateOpenglWindowSize_(LOWORD(lParam), HIWORD(lParam));
             break;
@@ -224,9 +223,12 @@ class graphics final
             wglDeleteContext(_openglContext);
             PostQuitMessage(0);
             return TRUE;
-        case WM_PAINT:
-            renderOpengl_();
+        case WM_PAINT: {
+            auto dc = GetDC(hwnd);
+            renderOpengl_(dc);
+            ReleaseDC(hwnd, dc);
             break;
+        }
         }
         return DefWindowProc(hwnd, msg, wParam, lParam);
     }
@@ -239,13 +241,13 @@ class graphics final
     }
 #endif
 
-    static inline void renderOpengl_()
+    static inline void renderOpengl_(HDC dc)
     {
         log::logInfo("render");
         glClearColor(0.f, 1.f, 0.f, 0.f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        SwapBuffers(_hdc);
+        SwapBuffers(dc);
     }
 };
 } // namespace engine

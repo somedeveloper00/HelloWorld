@@ -6,7 +6,7 @@ target_include_directories(engine INTERFACE
 )
 
 # link to opengl and glad
-target_link_libraries(engine INTERFACE glad ${OPENGL_gl_LIBRARY})
+target_link_libraries(engine INTERFACE glad ${OPENGL_gl_LIBRARY} dwmapi.lib)
 
 # for IDE intellisense
 target_sources(engine INTERFACE)
