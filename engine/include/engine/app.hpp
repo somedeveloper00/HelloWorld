@@ -1,15 +1,15 @@
 #pragma once
 
+#include "log.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include "log.hpp"
 
 namespace engine
 {
@@ -18,19 +18,30 @@ class application;
 
 constexpr size_t notFound = (size_t)-1;
 
-class component
+struct component
 {
     friend entity;
 
-  public:
-    virtual void update(const float deltaTime) {};
+    virtual void update() {};
 
     void remove() noexcept
     {
         _state = static_cast<State>(_state | State::Removing);
     }
 
+    std::shared_ptr<entity> getEntity()
+    {
+        return _entity.lock();
+    }
+
+    std::weak_ptr<component> getSelfRef()
+    {
+        return _selfRef;
+    }
+
   private:
+    virtual void created_() {};
+
     enum State : uint8_t
     {
         Active = 0,
@@ -39,6 +50,7 @@ class component
 
     std::weak_ptr<entity> _entity;
     State _state = State::Active;
+    std::weak_ptr<component> _selfRef;
 
     bool awaitingRemoval_() const
     {
@@ -132,31 +144,35 @@ class entity
         _parent = parent;
     }
 
-    template <typename T, typename... Args,
-              std::enable_if_t<std::constructible_from<T, Args...> && std::is_base_of_v<component, T>, int> = 0>
+    template <typename T, typename... Args>
+        requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
     std::shared_ptr<T> addComponent(Args &&...args)
     {
-        std::shared_ptr<T> component{new T(std::forward<Args>(args)...)};
+        std::shared_ptr<component> component{new T(std::forward<Args>(args)...)};
         component->_entity = _selfRef;
+        component->_selfRef = component;
+        component->created_();
         _newComponents.push_back(component);
-        return component;
+        return std::dynamic_pointer_cast<T>(component);
     }
 
-    template <typename T, std::enable_if_t<std::is_base_of_v<component, T>, int> = 0>
+    template <typename T>
+        requires std::is_base_of_v<component, T>
     std::shared_ptr<T> getComponent() const
     {
         for (size_t i = 0; i < _components.size(); i++)
             if (dynamic_cast<T *>(_components[i].get()))
-                return _components[i];
-        return std::shared_ptr<T>();
+                return std::dynamic_pointer_cast<T>(_components[i]);
+        return nullptr;
     }
 
-    template <typename T, std::enable_if_t<std::is_base_of_v<component, T>, int> = 0>
+    template <typename T>
+        requires std::is_base_of_v<component, T>
     void getComponents(std::vector<std::shared_ptr<T>> &vector)
     {
         for (size_t i = 0; i < _components.size(); i++)
             if (dynamic_cast<T *>(_components[i].get()))
-                vector.push_back(_components[i]);
+                vector.push_back(std::dynamic_pointer_cast<T>(_components[i]));
     }
 
     bool isSelfActive() const noexcept
@@ -210,9 +226,9 @@ class entity
     }
 
   private:
-    static inline std::vector<std::shared_ptr<entity>> _entities;
-    static inline std::vector<std::shared_ptr<entity>> _newEntities;
-    static inline std::vector<std::shared_ptr<entity>> _rootEntities;
+    static inline auto &_entities = *new std::vector<std::shared_ptr<entity>>();
+    static inline auto &_newEntities = *new std::vector<std::shared_ptr<entity>>();
+    static inline auto &_rootEntities = *new std::vector<std::shared_ptr<entity>>();
 
     std::vector<std::shared_ptr<component>> _components{};
     std::vector<std::shared_ptr<component>> _newComponents{};
@@ -227,10 +243,10 @@ class entity
     {
     }
 
-    void update(const float deltaTime)
+    void update()
     {
         for (auto &component : _components)
-            component->update(deltaTime);
+            component->update();
     }
 
     void addNewComponents()
@@ -279,7 +295,7 @@ class time
     static inline void setTargetFps(const int targetFps) noexcept
     {
         _targetFps = targetFps;
-        _targetDelay = std::chrono::duration<float>(1 / _targetFps);
+        new (&_targetDelay) std::chrono::duration<float>(1.f / _targetFps);
     }
 
     static inline float getTotalTime() noexcept
@@ -299,7 +315,7 @@ class time
 
     static inline float getLastFrameSleepTime() noexcept
     {
-        return _lastFrameSleep.count();
+        return _lastFrameSleep;
     }
 
   private:
@@ -308,13 +324,25 @@ class time
     static inline float _totalTime;
     static inline size_t _totalFrames;
     static inline float _deltaTime;
-    static inline std::chrono::duration<float> _lastFrameSleep;
+    static inline float _lastFrameSleep;
 };
 
 class application
 {
   public:
     application() = delete;
+
+    // hooks to execute before component updates in the loop
+    static inline auto &preComponentHooks = *new std::vector<std::function<void()>>();
+
+    // hooks to execute after component updates in the loop
+    static inline auto &postComponentHooks = *new std::vector<std::function<void()>>();
+
+    // hooks to execute after the application is closed
+    static inline auto &onExitHooks = *new std::vector<std::function<void()>>();
+
+    // for function pointer lists in this class
+    static inline std::mutex hooksMutex;
 
     static inline void run()
     {
@@ -326,16 +354,24 @@ class application
         while (_isRunning)
         {
             currentFrameTime = std::chrono::high_resolution_clock::now();
-            time::_deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+            time::_deltaTime = (currentFrameTime - lastFrameTime).count() / 1e9f; // convert to seconds
             time::_totalTime += time::_deltaTime;
             time::_totalFrames++;
             lastFrameTime = currentFrameTime;
 
-            for (auto &func : _preComponentHooks)
-                std::invoke(func);
+            hooksMutex.lock();
+            auto preComponentHooksCopy = preComponentHooks;
+            auto postComponentHooksCopy = postComponentHooks;
+            auto onExitHooksCopy = onExitHooks;
+            auto postLoopExecutesCopy = _postLoopExecutes;
+            _postLoopExecutes.clear();
+            hooksMutex.unlock();
+
+            for (auto &func : preComponentHooksCopy)
+                func();
 
             for (auto &entities : entity::_entities)
-                entities->update(time::_deltaTime);
+                entities->update();
             for (auto &entities : entity::_entities)
                 entities->removeComponents();
             for (auto &entities : entity::_entities)
@@ -368,59 +404,47 @@ class application
                 entity::_entities.push_back(std::move(entity));
             entity::_newEntities.clear();
 
+            for (auto &func : postComponentHooksCopy)
+                func();
             for (auto &func : _postLoopExecutes)
-                std::invoke(func);
+                func();
 
             // frame-rate consistency
             auto now = std::chrono::high_resolution_clock::now();
-            auto diff = std::chrono::duration<float>(now - currentFrameTime);
-            time::_lastFrameSleep = time::_targetDelay - diff;
-            if (time::_lastFrameSleep.count() > 0)
-                sleepUntil_(now + time::_lastFrameSleep);
+            auto diff = now - currentFrameTime;
+            auto diffFromTarget = time::_targetDelay - diff;
+            time::_lastFrameSleep = std::chrono::duration<float>(diffFromTarget).count();
+            if (diffFromTarget.count() > 0)
+                sleepUntilExact_(now + diffFromTarget);
         }
+        hooksMutex.lock();
+        auto onExitHooksCopy = onExitHooks;
+        hooksMutex.unlock();
+        for (auto &func : onExitHooksCopy)
+            func();
     }
 
+    // thread-safe. exists the application after the current frame is finished
     static inline void close()
     {
         _isRunning = false;
     }
 
-    static inline void addPreComponentHook(std::function<void()> &&func)
-    {
-        _preComponentHooks.push_back(func);
-    }
-
-    static inline void removePreComponentHook(std::function<void()> &&func)
-    {
-        auto target = func.target<void (*)()>();
-        _postLoopExecutes.push_back([&target]() {
-            for (size_t i = 0; i < _preComponentHooks.size(); i++)
-                if (_preComponentHooks[i].target<void (*)()>() == target)
-                {
-                    _preComponentHooks.erase(_preComponentHooks.begin() + i);
-                    return;
-                }
-        });
-    }
-
   private:
     static inline bool _isRunning;
 
-    // hooks to execute before component updates in the loop
-    static inline std::vector<std::function<void()>> _preComponentHooks;
+    // commands to execute after each loop. resets on every iteration. it's entirely internal to this class
+    static inline auto &_postLoopExecutes = *new std::vector<std::function<void()>>();
 
-    // commands to execute after each loop. resets on every iteration
-    static inline std::vector<std::function<void()>> _postLoopExecutes;
-
-    static inline void sleepUntil_(const auto time)
+    static inline void sleepUntilExact_(const auto time)
     {
         auto now = std::chrono::high_resolution_clock::now();
         auto diff = std::chrono::duration<float>(now - time);
         auto toSleep = diff - std::chrono::duration<float>(0.001f); // leave 2 milliseconds
         std::this_thread::sleep_for(toSleep);
-        // spin-lock for accuracy
         while (std::chrono::high_resolution_clock::now() < time)
         {
+            // spin-lock for accuracy
         }
     }
 };

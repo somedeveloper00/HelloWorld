@@ -65,7 +65,9 @@ class input final
         mode &= ~ENABLE_QUICK_EDIT_MODE;
         SetConsoleMode(hStdin, mode);
 
-        application::addPreComponentHook(internal_tick_);
+        application::hooksMutex.lock();
+        application::preComponentHooks.push_back(internal_tick_);
+        application::hooksMutex.unlock();
     }
 
     static inline state getKeyState(const key key)

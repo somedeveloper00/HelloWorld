@@ -22,8 +22,8 @@ struct benchmark final
     ~benchmark()
     {
         auto now = std::chrono::high_resolution_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - _startTime).count();
-        engine::log::logInfo(Format, elapsed / 1000.f / 1000.f, label);
+        auto elapsed = std::chrono::nanoseconds(now - _startTime).count();
+        engine::log::logInfo(Format, elapsed / 1000.f, label);
     }
 
   private:

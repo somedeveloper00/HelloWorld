@@ -2,9 +2,10 @@
 
 #include "engine/app.hpp"
 #include "engine/benchmark.hpp"
+#include "engine/graphics.hpp"
 #include "engine/input.hpp"
 #include "engine/log.hpp"
-
+#include <cmath>
 
 namespace
 {
@@ -33,7 +34,7 @@ static inline void deleteRandomEntities_(const size_t count)
     }
 }
 
-static inline void debugShortcuts_()
+static inline void tick_()
 {
     static auto close = engine::input::key::escape;
     static auto fps = engine::input::key::f;
@@ -44,8 +45,14 @@ static inline void debugShortcuts_()
     static auto createRandomHugeCount = 1000;
     static auto deleteRandomCount = 5;
 
+    engine::graphics::clearColor.r = sin(engine::time::getTotalTime()) * sin(engine::time::getTotalTime());
+    engine::graphics::clearColor.g = cos(2 * engine::time::getTotalTime()) * cos(2 * engine::time::getTotalTime());
+    engine::graphics::clearColor.b = engine::time::getTotalTime() - (float)(int)engine::time::getTotalTime();
+    // engine::log::logInfo("color changed to {}", engine::graphics::clearColor);
+
     if (engine::input::isKeyJustDown(close))
     {
+        engine::log::logInfo("closing. total frames: {} total execution time: {}", engine::time::getTotalFrames(), engine::time::getTotalTime());
         engine::application::close();
     }
     else if (engine::input::isKeyJustDown(fps))
@@ -63,6 +70,7 @@ static inline void debugShortcuts_()
             engine::log::logInfo("no entities.");
         else
         {
+            engine::log::logInfo("entities hierarchy:");
             size_t depth = 0;
             auto print = [&depth](engine::entity *entity) {
                 std::string componentsStr;
@@ -70,7 +78,8 @@ static inline void debugShortcuts_()
                 entity->getComponents(components);
                 for (size_t i = 0; i < components.size(); i++)
                 {
-                    componentsStr += ((char *)typeid(*components[i].get()).name() + 6);
+                    auto &comp = *components[i].get();
+                    componentsStr += ((char *)typeid(comp).name() + 6);
                     if (i != components.size() - 1)
                         componentsStr += ", ";
                 }
@@ -139,5 +148,7 @@ static inline void debugShortcuts_()
 
 static inline void initializeDebugShortcuts()
 {
-    engine::application::addPreComponentHook(debugShortcuts_);
+    engine::application::hooksMutex.lock();
+    engine::application::preComponentHooks.push_back(tick_);
+    engine::application::hooksMutex.unlock();
 }
