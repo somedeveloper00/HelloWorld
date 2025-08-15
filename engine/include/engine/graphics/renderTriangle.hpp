@@ -24,7 +24,7 @@ struct renderTriangle : public engine::component
             void main()
             {
                 gl_Position = vec4(position, 1.0);
-                fragPosition = gl_Position;
+                fragPosition = position;
             }
             )";
 
@@ -34,7 +34,7 @@ struct renderTriangle : public engine::component
             out vec4 color;
             void main()
             {
-                color = vec4(fragPosition, 1.0);
+                color = vec4(fragPosition+0.5, 1.0);
             }
             )";
 
