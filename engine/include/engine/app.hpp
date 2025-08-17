@@ -5,7 +5,6 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -19,30 +18,37 @@ class application;
 
 constexpr size_t notFound = (size_t)-1;
 
+// a component belonging to an entity. it can be used to add functionality to the entity
 struct component
 {
     friend entity;
 
+    // marks this component for removal. it will be removed after the current frame is finished (before the application::postComponentHooks)
     void remove() noexcept
     {
         _state = static_cast<State>(_state | State::Removing);
     }
 
+    // get shared_ptr to the entity owning this component. it's valid as long as the component exists in the entity hierarchy
     std::shared_ptr<entity> getEntity()
     {
         return _entity.lock();
     }
 
+    // get weak_ptr to self. it's valid as long as the component exists in the entity hierarchy
     std::weak_ptr<component> getWeakPtr()
     {
         return _selfRef;
     }
 
   private:
+    // gets called after creation as soon as all the base local variables are initialized and after the constructor
     virtual void created_() {};
 
+    // gets called every tick
     virtual void update_() {};
 
+    // gets called when the component is removed from the entity and base local variables are valid, and before the destructor is called
     virtual void removed_() {};
 
     enum State : uint8_t
@@ -61,6 +67,7 @@ struct component
     }
 };
 
+// an entity in the engine. it can have components and children entities
 class entity
 {
     friend application;
@@ -68,6 +75,7 @@ class entity
   public:
     std::string name;
 
+    // creates a new entity with the given name
     static inline std::shared_ptr<entity> create(std::string &&name = "New Entity")
     {
         entity *newEntity = new entity(std::move(name));
@@ -127,23 +135,20 @@ class entity
             child->remove();
     }
 
-    void setParent(const std::shared_ptr<entity> parent)
+    void setParent(const std::shared_ptr<entity> &parent)
     {
-        if (_parent.get() && !parent.get())
+        if (_parent && !parent)
         {
             auto ref = _selfRef.lock();
             s_rootEntities.push_back(ref);
             _parent->removeFromChildren_(ref);
         }
-        else if (!_parent.get() && parent.get())
+        else if (!_parent && parent)
         {
-            for (size_t i = 0; i < s_rootEntities.size(); i++)
-                if (s_rootEntities[i].get() == this)
-                {
-                    s_rootEntities.erase(s_rootEntities.begin() + i);
-                    break;
-                }
-            parent->_children.push_back(_selfRef.lock());
+            auto ref = _selfRef.lock();
+            // remove from root entities
+            s_rootEntities.erase(std::remove(s_rootEntities.begin(), s_rootEntities.end(), ref), s_rootEntities.end());
+            parent->_children.push_back(ref);
         }
         _parent = parent;
     }
@@ -197,36 +202,22 @@ class entity
 
     size_t getSiblindIndex() const
     {
-        if (!_parent.get())
+        if (!_parent)
             return notFound;
-        for (size_t i = 0; i < _parent->_children.size(); i++)
-            if (_parent->_children[i].get() == this)
-                return i;
-        return notFound;
+        auto ref = _selfRef.lock();
+        return std::find(_parent->_children.begin(), _parent->_children.end(), ref) - _parent->_children.begin();
     }
 
     void setSiblingIndex(size_t index) const
     {
-        if (!_parent.get())
+        if (!_parent)
         {
-            engine::log::logWarning("trying to set the siblind of entity \"{}\" which does "
-                                    "not have "
-                                    "parent",
-                                    name);
+            engine::log::logError("trying to set the siblind of entity \"{}\" which does not have parent", name);
             return;
         }
-        for (size_t i = 0; i < _parent->_children.size(); i++)
-            if (_parent->_children[i].get() == this)
-            {
-                if (i == index)
-                    break;
-                std::shared_ptr<entity> item = std::move(_parent->_children[i]);
-                _parent->_children.erase(_parent->_children.begin() + i);
-                if (index > i)
-                    index--;
-                _parent->_children.insert(_parent->_children.begin() + index, std::move(item));
-                break;
-            }
+        auto ref = _selfRef.lock();
+        auto selfIt = std::find(_parent->_children.begin(), _parent->_children.end(), ref);
+        std::rotate(selfIt, selfIt + 1, _parent->_children.end());
     }
 
   private:
