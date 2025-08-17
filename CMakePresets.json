@@ -1,4 +1,4 @@
-{
+﻿{
     "version": 3,
     "cmakeMinimumRequired": {
         "major": 4
@@ -67,7 +67,9 @@
             "binaryDir": "${sourceDir}/build/${presetName}",
             "installDir": "${sourceDir}/build/install/${presetName}",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "gcc-13",
+                "CMAKE_CXX_COMPILER": "g++-13"
             },
             "condition": {
                 "type": "equals",

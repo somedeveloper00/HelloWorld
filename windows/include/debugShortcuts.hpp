@@ -2,9 +2,9 @@
 
 #include "engine/app.hpp"
 #include "engine/benchmark.hpp"
-#include "engine/graphics.hpp"
-#include "engine/input.hpp"
+#include "engine/components/test/renderTriangle.hpp"
 #include "engine/log.hpp"
+#include "engine/window.hpp"
 #include <cmath>
 
 namespace
@@ -41,6 +41,7 @@ static inline void tick_()
     static auto hierarchy = engine::input::key::h;
     static auto createRandom = engine::input::key::a;
     static auto deleteRandom = engine::input::key::d;
+    static auto addTriangle = engine::input::key::t;
     static auto createRandomCount = 100;
     static auto createRandomHugeCount = 1000;
     static auto deleteRandomCount = 5;
@@ -57,11 +58,7 @@ static inline void tick_()
     }
     else if (engine::input::isKeyJustDown(fps))
     {
-        engine::log::logInfo(
-            "frame: {} fps: {} dt: {} slept: {} targetFps: {} frame-use: %{}", engine::time::getTotalFrames(),
-            1 / engine::time::getDeltaTime(), engine::time::getDeltaTime(), engine::time::getLastFrameSleepTime(),
-            engine::time::getTargetFps(),
-            100 - ((engine::time::getLastFrameSleepTime()) / (1.f / engine::time::getTargetFps()) * 100));
+        engine::log::logInfo("frame: {} fps: {} dt: {} slept: {} targetFps: {} total-entities: {} frame-use: %{}", engine::time::getTotalFrames(), 1 / engine::time::getDeltaTime(), engine::time::getDeltaTime(), engine::time::getLastFrameSleepTime(), engine::time::getTargetFps(), engine::entity::getEntitiesCount(), 100 - ((engine::time::getLastFrameSleepTime()) / (1.f / engine::time::getTargetFps()) * 100));
     }
     else if (engine::input::isKeyJustDown(hierarchy))
     {
@@ -122,7 +119,7 @@ static inline void tick_()
             }
         }
     }
-    else if (engine::input::isKeyHeldDown(engine::input::key::shift) && engine::input::isKeyJustDown(createRandom))
+    else if (engine::input::isKeyHeldDown(engine::input::key::leftShift) && engine::input::isKeyJustDown(createRandom))
     {
         {
             bench("add-huge");
@@ -142,6 +139,11 @@ static inline void tick_()
     {
         bench("remove");
         deleteRandomEntities_(deleteRandomCount);
+    }
+    else if (engine::input::isKeyJustDown(addTriangle))
+    {
+        bench("add triangle");
+        engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
     }
 }
 } // namespace

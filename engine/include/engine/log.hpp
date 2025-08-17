@@ -9,7 +9,8 @@
 #include <corecrt_io.h>
 #include <windows.h>
 #else
-#error "platform not supported"
+#include <stdio.h> 
+#include <unistd.h>
 #endif
 
 namespace engine
@@ -60,6 +61,8 @@ class log final
     {
 #ifdef _WIN32
         return _isatty(_fileno(stdout));
+#else
+        return isatty(fileno(stdout));
 #endif
     }
 

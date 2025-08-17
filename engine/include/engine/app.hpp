@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,8 +23,6 @@ struct component
 {
     friend entity;
 
-    virtual void update() {};
-
     void remove() noexcept
     {
         _state = static_cast<State>(_state | State::Removing);
@@ -34,13 +33,17 @@ struct component
         return _entity.lock();
     }
 
-    std::weak_ptr<component> getSelfRef()
+    std::weak_ptr<component> getWeakPtr()
     {
         return _selfRef;
     }
 
   private:
     virtual void created_() {};
+
+    virtual void update_() {};
+
+    virtual void removed_() {};
 
     enum State : uint8_t
     {
@@ -69,42 +72,42 @@ class entity
     {
         entity *newEntity = new entity(std::move(name));
         std::shared_ptr<entity> sharedPtr{newEntity};
-        _rootEntities.push_back(sharedPtr);
+        s_rootEntities.push_back(sharedPtr);
         newEntity->_selfRef = sharedPtr;
-        _newEntities.push_back(sharedPtr);
+        s_newEntities.push_back(sharedPtr);
         return sharedPtr;
     }
 
     static inline size_t getRootEntitiesCount() noexcept
     {
-        return _rootEntities.size();
+        return s_rootEntities.size();
     }
 
     static inline std::vector<std::shared_ptr<entity>> getRootEntities() noexcept
     {
-        return _rootEntities;
+        return s_rootEntities;
     }
 
     static inline std::shared_ptr<entity> getRootEntityAt(const size_t index) noexcept
     {
-        return _rootEntities[index];
+        return s_rootEntities[index];
     }
 
     static inline size_t getEntitiesCount() noexcept
     {
-        return _entities.size() + _newEntities.size();
+        return s_entities.size() + s_newEntities.size();
     }
 
     static inline std::vector<std::shared_ptr<entity>> getEntities() noexcept
     {
-        auto copy = _entities;
-        copy.insert(copy.end(), _newEntities.begin(), _newEntities.end());
+        auto copy = s_entities;
+        copy.insert(copy.end(), s_newEntities.begin(), s_newEntities.end());
         return copy;
     }
 
     static inline std::shared_ptr<entity> getEntityAt(const size_t index) noexcept
     {
-        return index < _entities.size() ? _entities[index] : _newEntities[index - _entities.size()];
+        return index < s_entities.size() ? s_entities[index] : s_newEntities[index - s_entities.size()];
     }
 
     std::vector<std::shared_ptr<entity>> getChildren() const noexcept
@@ -128,15 +131,16 @@ class entity
     {
         if (_parent.get() && !parent.get())
         {
-            _rootEntities.push_back(_selfRef.lock());
-            _parent->removeFromChildren_(this);
+            auto ref = _selfRef.lock();
+            s_rootEntities.push_back(ref);
+            _parent->removeFromChildren_(ref);
         }
         else if (!_parent.get() && parent.get())
         {
-            for (size_t i = 0; i < _rootEntities.size(); i++)
-                if (_rootEntities[i].get() == this)
+            for (size_t i = 0; i < s_rootEntities.size(); i++)
+                if (s_rootEntities[i].get() == this)
                 {
-                    _rootEntities.erase(_rootEntities.begin() + i);
+                    s_rootEntities.erase(s_rootEntities.begin() + i);
                     break;
                 }
             parent->_children.push_back(_selfRef.lock());
@@ -226,9 +230,9 @@ class entity
     }
 
   private:
-    static inline auto &_entities = *new std::vector<std::shared_ptr<entity>>();
-    static inline auto &_newEntities = *new std::vector<std::shared_ptr<entity>>();
-    static inline auto &_rootEntities = *new std::vector<std::shared_ptr<entity>>();
+    static inline auto &s_entities = *new std::vector<std::shared_ptr<entity>>();
+    static inline auto &s_newEntities = *new std::vector<std::shared_ptr<entity>>();
+    static inline auto &s_rootEntities = *new std::vector<std::shared_ptr<entity>>();
 
     std::vector<std::shared_ptr<component>> _components{};
     std::vector<std::shared_ptr<component>> _newComponents{};
@@ -239,28 +243,49 @@ class entity
     bool _active = true;
     bool _hierarchyActive = true;
 
-    entity(std::string &&name) : name(std::move(name))
+    entity(std::string &&name)
+        : name(std::move(name))
     {
     }
 
-    void update()
+    void update_()
     {
         for (auto &component : _components)
-            component->update();
+            component->update_();
     }
 
-    void addNewComponents()
+    void addNewComponents_()
     {
         for (auto &component : _newComponents)
             _components.push_back(std::move(component));
         _newComponents.clear();
     }
 
-    void removeComponents()
+    void removeComponents_()
     {
-        auto r = std::remove_if(_components.begin(), _components.end(),
-                                [](std::shared_ptr<component> &comp) { return comp->awaitingRemoval_(); });
+        auto r = std::remove_if(
+            _components.begin(), _components.end(),
+            [](std::shared_ptr<component> &comp) {
+                return comp->awaitingRemoval_();
+            });
+        std::for_each(
+            r, _components.end(),
+            [](const std::shared_ptr<component> &comp) {
+                comp->removed_();
+            });
         _components.erase(r, _components.end());
+    }
+
+    void removed_()
+    {
+        auto ref = _selfRef.lock();
+        if (_parent)
+            _parent->removeFromChildren_(ref);
+        // remove from roots
+        s_rootEntities.erase(std::remove(s_rootEntities.begin(), s_rootEntities.end(), ref), s_rootEntities.end());
+        // remove all components
+        for (auto &comp : _components)
+            comp->removed_();
     }
 
     void setHierarchyActive_(const bool active)
@@ -270,14 +295,9 @@ class entity
             child->setHierarchyActive_(active);
     }
 
-    void removeFromChildren_(entity *entity)
+    void removeFromChildren_(std::shared_ptr<entity> entity)
     {
-        for (size_t i = 0; i < _children.size(); i++)
-            if (_children[i].get() == entity)
-            {
-                _children.erase(_children.begin() + i);
-                return;
-            }
+        _children.erase(std::remove(_children.begin(), _children.end(), entity), _children.end());
     }
 };
 
@@ -370,39 +390,32 @@ class application
             for (auto &func : preComponentHooksCopy)
                 func();
 
-            for (auto &entities : entity::_entities)
-                entities->update();
-            for (auto &entities : entity::_entities)
-                entities->removeComponents();
-            for (auto &entities : entity::_entities)
-                entities->addNewComponents();
+            for (auto &entities : entity::s_entities)
+                entities->update_();
+            for (auto &entities : entity::s_entities)
+                entities->removeComponents_();
+            for (auto &entities : entity::s_entities)
+                entities->addNewComponents_();
 
             { // remove entities
-                auto callback = [](std::shared_ptr<entity> &testEntity) {
-                    if (testEntity->_removing)
-                    {
-                        if (testEntity->_parent)
-                            testEntity->_parent->removeFromChildren_(testEntity.get());
-
-                        // remove from roots
-                        auto it = std::find_if(
-                            entity::_rootEntities.begin(), entity::_rootEntities.end(),
-                            [&testEntity](const std::shared_ptr<entity> &other) { return other == testEntity; });
-                        if (it != entity::_rootEntities.end())
-                            entity::_rootEntities.erase(it);
-
-                        return true;
-                    }
-                    return false;
-                };
-                auto newEnd = std::remove_if(entity::_entities.begin(), entity::_entities.end(), callback);
-                entity::_entities.erase(newEnd, entity::_entities.end());
+                entity::s_entities.erase(
+                    std::remove_if(
+                        entity::s_entities.begin(), entity::s_entities.end(),
+                        [](std::shared_ptr<entity> &testEntity) {
+                            if (testEntity->_removing)
+                            {
+                                testEntity->removed_();
+                                return true;
+                            }
+                            return false;
+                        }),
+                    entity::s_entities.end());
             }
 
             // add entities
-            for (auto &entity : entity::_newEntities)
-                entity::_entities.push_back(std::move(entity));
-            entity::_newEntities.clear();
+            for (auto &entity : entity::s_newEntities)
+                entity::s_entities.push_back(std::move(entity));
+            entity::s_newEntities.clear();
 
             for (auto &func : postComponentHooksCopy)
                 func();

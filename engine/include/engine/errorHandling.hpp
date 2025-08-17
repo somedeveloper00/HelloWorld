@@ -6,7 +6,7 @@
 
 namespace engine
 {
-static inline void fatalErrorIfNot(bool condition, const char *const msg)
+static inline void fatalAssert(bool condition, const char *const msg)
 {
     if (!condition)
     {
