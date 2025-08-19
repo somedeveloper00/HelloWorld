@@ -34,6 +34,7 @@ struct component
     // get shared_ptr to the entity owning this component. it's valid as long as the component exists in the entity hierarchy
     std::shared_ptr<entity> getEntity()
     {
+        bench("getEntity");
         return _entity.lock();
     }
 
@@ -169,6 +170,7 @@ class entity
         requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
     std::shared_ptr<T> ensureComponentExists(Args &&...args)
     {
+        bench("ensureComponentExists");
         if (auto r = getComponent<T>(args...))
             return r;
         return addComponent<T>(args...);
@@ -273,6 +275,7 @@ class entity
 
     void update_()
     {
+        bench("entity::update");
         for (auto &component : _components)
             component->update_();
     }
