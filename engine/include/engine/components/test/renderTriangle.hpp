@@ -1,8 +1,13 @@
 #pragma once
 
-#include "../../app.hpp"
-#include "../../window.hpp"
+#include "engine/app.hpp"
+#include "engine/benchmark.hpp"
+#include "engine/components/componentUtility.hpp"
+#include "engine/components/transform.hpp"
+#include "engine/window.hpp"
+#include "glm/ext/quaternion_transform.hpp"
 #include <algorithm>
+#include <glm/gtc/type_ptr.hpp>
 #include <memory>
 #include <mutex>
 
@@ -14,63 +19,95 @@ struct renderTriangle : public component
     float swaySpeed = 1;
 
   private:
-    static inline auto &s_instances = *new std::vector<std::weak_ptr<component>>();
-    static inline GLuint s_shaderProgram;
-    static inline GLuint s_vao;
-    static inline GLint s_offsetLocation;
-    glm::vec3 _offset = {0, 0, 0};
-    float _startTime = 0;
+    static inline auto &s_instances = *new std::vector<renderTriangle *>();
+    float _startTime;
+    std::weak_ptr<transform> _transform;
 
-    static inline void ensureInitialize_()
+    static inline void initialize_()
     {
-        static bool s_initialized;
-        if (s_initialized)
-            return;
-        s_initialized = true;
-
+        executeOnce();
         // initialize
         if (graphics::getRenderer() == graphics::renderer::opengl)
         {
             // create shader
             auto vertSrc = R"(
-            #version 330 core
+            #version 460 core
             layout(location = 0) in vec3 position;
-            uniform vec3 offset;
+            layout(location = 1) in vec3 globalPosition;
+            layout(location = 2) in vec4 globalRotation;
+            layout(location = 3) in vec3 globalScale;
             out vec3 fragPosition;
+
+            mat4 makeTranslation(vec3 t) {
+                mat4 m = mat4(1.0);
+                m[3].xyz = t; // fourth column is translation
+                return m;
+            }
+
+            mat4 makeScale(vec3 s) {
+                mat4 m = mat4(1.0);
+                m[0][0] = s.x;
+                m[1][1] = s.y;
+                m[2][2] = s.z;
+                return m;
+            }
+
+            mat4 makeRotationQuat(vec4 q) {
+                // Ensure quaternion is normalized
+                vec4 nq = normalize(q);
+                float x = nq.x, y = nq.y, z = nq.z, w = nq.w;
+
+                float xx = x * x;
+                float yy = y * y;
+                float zz = z * z;
+                float xy = x * y;
+                float xz = x * z;
+                float yz = y * z;
+                float wx = w * x;
+                float wy = w * y;
+                float wz = w * z;
+
+                return mat4(
+                    1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz),       2.0 * (xz - wy),       0.0,
+                    2.0 * (xy - wz),       1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx),       0.0,
+                    2.0 * (xz + wy),       2.0 * (yz - wx),       1.0 - 2.0 * (xx + yy), 0.0,
+                    0.0,                   0.0,                   0.0,                   1.0
+                );
+            }
+            
             void main()
             {
-                gl_Position = vec4(position + offset, 1.0);
-                fragPosition = position + offset;
+                gl_Position = makeTranslation(globalPosition) * makeRotationQuat(globalRotation) * makeScale(globalScale) * vec4(position, 1.f);
+                fragPosition = position;
             }
             )";
 
             auto fragSrc = R"(
-            #version 330 core
+            #version 460 core
             in vec3 fragPosition;
             out vec4 color;
             void main()
             {
-                color = vec4(fragPosition+0.5, 1.0);
+                color = vec4(fragPosition + 0.5, 1.0);
             }
             )";
 
-            // compile shaders
-            GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-            glShaderSource(vertexShader, 1, &vertSrc, nullptr);
-            glCompileShader(vertexShader);
-            GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-            glShaderSource(fragmentShader, 1, &fragSrc, nullptr);
-            glCompileShader(fragmentShader);
-            // link shaders
-            s_shaderProgram = glCreateProgram();
-            glAttachShader(s_shaderProgram, vertexShader);
-            glAttachShader(s_shaderProgram, fragmentShader);
-            glLinkProgram(s_shaderProgram);
-            // cleanup
-            glDeleteShader(vertexShader);
-            glDeleteShader(fragmentShader);
+            struct InstanceData
+            {
+                glm::vec3 position;
+                glm::quat rotation;
+                glm::vec3 scale;
+            };
 
-            s_offsetLocation = glGetUniformLocation(s_shaderProgram, "offset");
+            // compile and link shaders
+            static auto s_shaderProgram = graphics::opengl::createProgram(vertSrc, fragSrc);
+            if (s_shaderProgram == GL_FALSE)
+            {
+                application::close();
+                return;
+            }
+
+            static auto s_matrixLocation = glGetUniformLocation(s_shaderProgram, "matrix");
 
             // set up triangle vertices
             GLfloat vertices[] = {
@@ -79,28 +116,51 @@ struct renderTriangle : public component
                 0.0f, 0.5f, 0.0f    // top
             };
             // create _vao and VBO
-            GLuint VBO;
+            static GLuint s_vao;
             glGenVertexArrays(1, &s_vao);
-            glGenBuffers(1, &VBO);
             glBindVertexArray(s_vao);
+            GLuint VBO;
+            glGenBuffers(1, &VBO);
             glBindBuffer(GL_ARRAY_BUFFER, VBO);
             glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid *)0);
             glEnableVertexAttribArray(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            // instance buffer
+            static GLuint s_instancedVbo;
+            glGenBuffers(1, &s_instancedVbo);
+            glBindBuffer(GL_ARRAY_BUFFER, s_instancedVbo);
+
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void *)(offsetof(InstanceData, position)));
+            glVertexAttribDivisor(1, 1);
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void *)(offsetof(InstanceData, rotation)));
+            glVertexAttribDivisor(2, 1);
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void *)(offsetof(InstanceData, scale)));
+            glVertexAttribDivisor(3, 1);
+
             glBindVertexArray(0);
+
+            static std::vector<InstanceData> s_instanceDataList{};
 
             graphics::opengl::onRendersMutex.lock();
             graphics::opengl::onRenders[0].push_back([]() {
-                // draw batch
-                glUseProgram(s_shaderProgram);
-                glBindVertexArray(s_vao);
+                bench("drawing render triangles");
+                // Upload matrices to GPU
+                s_instanceDataList.clear();
                 for (auto &instance : s_instances)
-                {
-                    auto &offset = dynamic_cast<renderTriangle *>(instance.lock().get())->_offset;
-                    glUniform3f(s_offsetLocation, offset.x, offset.y, offset.z);
-                    glDrawArrays(GL_TRIANGLES, 0, 3);
-                }
+                    if (auto tr = instance->_transform.lock())
+                        s_instanceDataList.push_back({tr->position, tr->rotation, tr->scale});
+                glBindBuffer(GL_ARRAY_BUFFER, s_instancedVbo);
+                glBufferData(GL_ARRAY_BUFFER, s_instanceDataList.size() * sizeof(InstanceData), s_instanceDataList.data(), GL_DYNAMIC_DRAW);
+                glUseProgram(s_shaderProgram);
+
+                // draw
+                glBindVertexArray(s_vao);
+                glDrawArraysInstanced(GL_TRIANGLES, 0, 3, static_cast<int>(s_instances.size()));
                 glUseProgram(0);
                 glBindVertexArray(0);
             });
@@ -110,25 +170,24 @@ struct renderTriangle : public component
 
     void created_() override
     {
-        ensureInitialize_();
-        s_instances.push_back(getWeakPtr());
+        initialize_();
+        s_instances.push_back(this);
         _startTime = time::getTotalTime();
+        _transform = getEntity()->ensureComponentExists<transform>();
     }
 
     void removed_() override
     {
-        s_instances.erase(
-            std::remove_if(
-                s_instances.begin(), s_instances.end(),
-                [self = this](const std::weak_ptr<component> &comp) {
-                    return comp.expired() || (dynamic_cast<renderTriangle*>(comp.lock().get()) == self);
-                }),
-            s_instances.end());
+        s_instances.erase(std::remove(s_instances.begin(), s_instances.end(), this), s_instances.end());
     }
 
     void update_() override
     {
-        _offset.x = sin((time::getTotalTime() - _startTime) * swaySpeed);
+        bench("renderTriangle::update");
+        auto &transformPtr = *getEntity()->ensureComponentExists<transform>().get();
+        transformPtr.position.x = glm::sin((time::getTotalTime() - _startTime) * swaySpeed);
+        transformPtr.rotation = glm::rotate(transformPtr.rotation, time::getDeltaTime(), glm::vec3(0.f, 0.f, 1.f));
+        transformPtr.markDirtyRecursively();
     }
 };
 } // namespace engine::test

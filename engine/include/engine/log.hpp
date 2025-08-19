@@ -9,7 +9,7 @@
 #include <corecrt_io.h>
 #include <windows.h>
 #else
-#include <stdio.h> 
+#include <stdio.h>
 #include <unistd.h>
 #endif
 
@@ -27,17 +27,20 @@ class log final
     // current info log handler in use
     static inline logHandler errorLogHandle = nullptr;
 
-    template <typename... Args> static inline void logInfo(const std::string &formatStr, Args &&...args)
+    template <typename... Args>
+    static inline void logInfo(const std::string &formatStr, Args &&...args)
     {
         infoLogHandle("[ENGINE INFO] " + std::vformat(formatStr, std::make_format_args(args...)));
     }
 
-    template <typename... Args> static inline void logWarning(const std::string &formatStr, Args &&...args)
+    template <typename... Args>
+    static inline void logWarning(const std::string &formatStr, Args &&...args)
     {
         warningLogHandle("[ENGINE WARNING] " + std::vformat(formatStr, std::make_format_args(args...)));
     }
 
-    template <typename... Args> static inline void logError(const std::string &formatStr, Args &&...args)
+    template <typename... Args>
+    static inline void logError(const std::string &formatStr, Args &&...args)
     {
         errorLogHandle("[ENGINE ERROR] " + std::vformat(formatStr, std::make_format_args(args...)));
     }

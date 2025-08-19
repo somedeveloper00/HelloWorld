@@ -14,6 +14,15 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <string>
+#include <vector>
+
+#ifdef WIN32 // use high performance GPU
+extern "C"
+{
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 namespace engine
 {
@@ -574,13 +583,12 @@ struct graphics final
 
     static inline void initialize(std::string name, const glm::vec2 center, const glm::vec2 size, bool useMica, bool useAcrylic, renderer renderer)
     {
-        bench(__FUNCTION__);
         static bool _initialized = false;
         fatalAssert(!_initialized, "window already initialized");
         _initialized = true;
         s_name = name;
         s_renderer = renderer;
-        s_size = size;
+        s_windowSize = size;
 
 // create window
 #ifndef NDEBUG
@@ -595,6 +603,9 @@ struct graphics final
         s_window = glfwCreateWindow(size.x, size.y, name.c_str(), NULL, NULL);
         fatalAssert(s_window != nullptr, "glfwCreateWindow failed");
         glfwMakeContextCurrent(s_window);
+
+        // update dpi
+        glfwGetWindowContentScale(s_window, &s_monitorSize.x, &s_monitorSize.y);
 
         input::initialize_(s_window);
 
@@ -621,7 +632,7 @@ struct graphics final
 
     static inline glm::vec2 getSize() noexcept
     {
-        return s_size;
+        return s_windowSize;
     }
 
     struct opengl final
@@ -636,24 +647,99 @@ struct graphics final
         static inline auto &onRenders = *new std::vector<std::vector<std::function<void()>>>{{}};
         static inline std::mutex onRendersMutex;
 
+        // compiles the source vertex shader and the source fragment shader, links them to a program and returns the program, or 0/GL_FALSE if failed
+        static inline GLuint createProgram(const std::string &vertexShaderSource, const std::string &fragmentShaderSource)
+        {
+            auto vertexShader = compileVertexShader(vertexShaderSource);
+            if (vertexShader == GL_FALSE)
+                return GL_FALSE;
+            auto fragmentShader = compileFragmentShader(fragmentShaderSource);
+            if (fragmentShader == GL_FALSE)
+                return GL_FALSE;
+            auto program = glCreateProgram();
+            glAttachShader(program, vertexShader);
+            glAttachShader(program, fragmentShader);
+            glLinkProgram(program);
+            glDeleteShader(vertexShader);
+            glDeleteShader(fragmentShader);
+            GLint success;
+            glGetProgramiv(program, GL_LINK_STATUS, &success);
+            if (success != GL_TRUE)
+            {
+                char buffer[512];
+                glGetProgramInfoLog(program, 512, NULL, buffer);
+                log::logError("opengl shader linking failed: {}", buffer);
+                return GL_FALSE;
+            }
+            return program;
+        }
+
+        // compiles the source vertex shader and returns the shader object or 0/GL_FALSE if failed
+        static inline GLuint compileVertexShader(const std::string &source)
+        {
+            auto shader = glCreateShader(GL_VERTEX_SHADER);
+            auto *cstr = source.c_str();
+            glShaderSource(shader, 1, &cstr, nullptr);
+            glCompileShader(shader);
+            GLint success;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+            if (success != GL_TRUE)
+            {
+                char buffer[512];
+                glGetShaderInfoLog(shader, 512, NULL, buffer);
+                log::logError("opengl vertex shader compilation error: {}", buffer);
+                return GL_FALSE;
+            }
+            return shader;
+        }
+
+        // compiles the source fragment shader and returns the shader object or 0/GL_FALSE if failed
+        static inline GLuint compileFragmentShader(const std::string &source)
+        {
+            auto shader = glCreateShader(GL_FRAGMENT_SHADER);
+            auto *cstr = source.c_str();
+            glShaderSource(shader, 1, &cstr, nullptr);
+            glCompileShader(shader);
+            GLint success;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+            if (success != GL_TRUE)
+            {
+                char buffer[512];
+                glGetShaderInfoLog(shader, 512, NULL, buffer);
+                log::logError("opengl fragment shader compilation error: {}", buffer);
+                return GL_FALSE;
+            }
+            return shader;
+        }
+
       private:
         static inline void initialize_()
         {
             fatalAssert(gladLoadGL((GLADloadfunc)glfwGetProcAddress) != 0, "gladLoadGL failed");
             glEnable(GL_DEPTH_TEST);
-            glViewport(0, 0, s_size.x, s_size.y);
+
+            // handle frame buffer size
+            glfwGetFramebufferSize(s_window, &s_frameBufferSize.x, &s_frameBufferSize.y);
+            glViewport(0, 0, s_frameBufferSize.x, s_frameBufferSize.y);
             glfwSetWindowSizeCallback(s_window, [](GLFWwindow *window, GLsizei width, GLsizei height) {
                 glViewport(0, 0, width, height);
-                s_size.x = width;
-                s_size.y = height;
+                s_windowSize.x = width;
+                s_windowSize.y = height;
                 tick_();
             });
+            glfwSetFramebufferSizeCallback(s_window, [](GLFWwindow *window, int width, int height) {
+                s_frameBufferSize.x = width;
+                s_frameBufferSize.y = height;
+                if (s_renderer == renderer::opengl)
+                    opengl::updateFrameBufferSize_(glm::vec2{width, height});
+            });
+
             application::hooksMutex.lock();
             application::postComponentHooks.push_back(tick_);
             application::hooksMutex.unlock();
         }
 
-        static inline void updateWindowSize_(glm::vec2 size)
+        static inline void updateFrameBufferSize_(glm::ivec2 size)
         {
             glViewport(0, 0, size.x, size.y);
         }
@@ -676,9 +762,12 @@ struct graphics final
 
   private:
     static inline renderer s_renderer;
-    static inline glm::vec2 s_size;
+    static inline glm::vec2 s_windowSize;
+    static inline glm::ivec2 s_frameBufferSize;
     static inline GLFWwindow *s_window;
     static inline std::string s_name;
+    static inline float s_dpi;
+    static inline glm::vec2 s_monitorSize;
 };
 
 } // namespace engine

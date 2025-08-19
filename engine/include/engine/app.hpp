@@ -1,5 +1,7 @@
 #pragma once
 
+#include "benchmark.hpp"
+#include "common/typeHash.hpp"
 #include "log.hpp"
 #include <algorithm>
 #include <chrono>
@@ -35,8 +37,8 @@ struct component
         return _entity.lock();
     }
 
-    // get weak_ptr to self. it's valid as long as the component exists in the entity hierarchy
-    std::weak_ptr<component> getWeakPtr()
+    // get std::weak_ptr to self. it's valid as long as the component exists in the entity hierarchy
+    std::weak_ptr<component> &getWeakPtr()
     {
         return _selfRef;
     }
@@ -60,6 +62,7 @@ struct component
     std::weak_ptr<entity> _entity;
     State _state = State::Active;
     std::weak_ptr<component> _selfRef;
+    size_t _typeHash;
 
     bool awaitingRemoval_() const
     {
@@ -96,7 +99,7 @@ class entity
         return s_rootEntities;
     }
 
-    static inline std::shared_ptr<entity> getRootEntityAt(const size_t index) noexcept
+    static inline std::shared_ptr<entity> &getRootEntityAt(const size_t index) noexcept
     {
         return s_rootEntities[index];
     }
@@ -106,11 +109,9 @@ class entity
         return s_entities.size() + s_newEntities.size();
     }
 
-    static inline std::vector<std::shared_ptr<entity>> getEntities() noexcept
+    static inline std::vector<std::shared_ptr<entity>> &getEntities() noexcept
     {
-        auto copy = s_entities;
-        copy.insert(copy.end(), s_newEntities.begin(), s_newEntities.end());
-        return copy;
+        return s_entities;
     }
 
     static inline std::shared_ptr<entity> getEntityAt(const size_t index) noexcept
@@ -118,9 +119,20 @@ class entity
         return index < s_entities.size() ? s_entities[index] : s_newEntities[index - s_entities.size()];
     }
 
+    // creates a copy of the children vector
     std::vector<std::shared_ptr<entity>> getChildren() const noexcept
     {
         return _children;
+    }
+
+    size_t getChildrenCount() const noexcept
+    {
+        return _children.size();
+    }
+
+    std::shared_ptr<entity> &getChildAt(const size_t index) noexcept
+    {
+        return _children[index];
     }
 
     std::shared_ptr<entity> getParent() const noexcept
@@ -155,11 +167,21 @@ class entity
 
     template <typename T, typename... Args>
         requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
+    std::shared_ptr<T> ensureComponentExists(Args &&...args)
+    {
+        if (auto r = getComponent<T>(args...))
+            return r;
+        return addComponent<T>(args...);
+    }
+
+    template <typename T, typename... Args>
+        requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
     std::shared_ptr<T> addComponent(Args &&...args)
     {
         std::shared_ptr<component> component{new T(std::forward<Args>(args)...)};
         component->_entity = _selfRef;
         component->_selfRef = component;
+        component->_typeHash = getTypeHash_<T>();
         component->created_();
         _newComponents.push_back(component);
         return std::dynamic_pointer_cast<T>(component);
@@ -169,9 +191,14 @@ class entity
         requires std::is_base_of_v<component, T>
     std::shared_ptr<T> getComponent() const
     {
-        for (size_t i = 0; i < _components.size(); i++)
-            if (dynamic_cast<T *>(_components[i].get()))
-                return std::dynamic_pointer_cast<T>(_components[i]);
+        bench("getComponent");
+        constexpr auto hash = getTypeHash_<T>();
+        for (auto &comp : _components)
+            if (comp->_typeHash == hash)
+                return std::static_pointer_cast<T>(comp);
+        for (auto &comp : _newComponents)
+            if (comp->_typeHash == hash)
+                return std::static_pointer_cast<T>(comp);
         return nullptr;
     }
 
@@ -179,9 +206,14 @@ class entity
         requires std::is_base_of_v<component, T>
     void getComponents(std::vector<std::shared_ptr<T>> &vector)
     {
+        bench("getComponents");
+        constexpr size_t hash = getTypeHash_<T>();
         for (size_t i = 0; i < _components.size(); i++)
-            if (dynamic_cast<T *>(_components[i].get()))
-                vector.push_back(std::dynamic_pointer_cast<T>(_components[i]));
+            if (_components[i]->_typeHash == hash)
+                vector.push_back(std::static_pointer_cast<T>(_components[i]));
+        for (size_t i = 0; i < _newComponents.size(); i++)
+            if (_newComponents[i]->_typeHash == hash)
+                vector.push_back(std::static_pointer_cast<T>(_newComponents[i]));
     }
 
     bool isSelfActive() const noexcept
@@ -254,17 +286,20 @@ class entity
 
     void removeComponents_()
     {
-        auto r = std::remove_if(
-            _components.begin(), _components.end(),
-            [](std::shared_ptr<component> &comp) {
-                return comp->awaitingRemoval_();
-            });
-        std::for_each(
-            r, _components.end(),
-            [](const std::shared_ptr<component> &comp) {
+        size_t write = 0;
+        for (size_t read = 0; read < _components.size(); ++read)
+        {
+            auto &comp = _components[read];
+            if (comp->awaitingRemoval_())
+            {
                 comp->removed_();
-            });
-        _components.erase(r, _components.end());
+                continue;
+            }
+            if (write != read)
+                _components[write] = std::move(comp);
+            ++write;
+        }
+        _components.resize(write);
     }
 
     void removed_()
@@ -357,13 +392,12 @@ class application
 
     static inline void run()
     {
-        _isRunning = true;
-
         auto lastFrameTime = std::chrono::high_resolution_clock::now();
         auto currentFrameTime = std::chrono::high_resolution_clock::now();
 
         while (_isRunning)
         {
+            bench("main loop");
             currentFrameTime = std::chrono::high_resolution_clock::now();
             time::_deltaTime = (currentFrameTime - lastFrameTime).count() / 1e9f; // convert to seconds
             time::_totalTime += time::_deltaTime;
@@ -381,51 +415,82 @@ class application
             for (auto &func : preComponentHooksCopy)
                 func();
 
-            for (auto &entities : entity::s_entities)
-                entities->update_();
-            for (auto &entities : entity::s_entities)
-                entities->removeComponents_();
-            for (auto &entities : entity::s_entities)
-                entities->addNewComponents_();
+            {
+                bench("handling entities");
+                {
+                    bench("updating entities");
+                    for (auto &entities : entity::s_entities)
+                        entities->update_();
+                }
+                {
+                    bench("removing components");
+                    for (auto &entities : entity::s_entities)
+                        entities->removeComponents_();
+                }
+                {
+                    bench("adding components");
+                    for (auto &entities : entity::s_entities)
+                        entities->addNewComponents_();
+                }
 
-            { // remove entities
-                entity::s_entities.erase(
-                    std::remove_if(
-                        entity::s_entities.begin(), entity::s_entities.end(),
-                        [](std::shared_ptr<entity> &testEntity) {
-                            if (testEntity->_removing)
-                            {
-                                testEntity->removed_();
-                                return true;
-                            }
-                            return false;
-                        }),
-                    entity::s_entities.end());
+                {
+                    bench("removing entities");
+                    // remove entities
+                    entity::s_entities.erase(
+                        std::remove_if(
+                            entity::s_entities.begin(), entity::s_entities.end(),
+                            [](std::shared_ptr<entity> &testEntity) {
+                                if (testEntity->_removing)
+                                {
+                                    testEntity->removed_();
+                                    return true;
+                                }
+                                return false;
+                            }),
+                        entity::s_entities.end());
+                }
+
+                // add entities
+                {
+                    bench("adding new entities");
+                    for (auto &entity : entity::s_newEntities)
+                        entity::s_entities.push_back(std::move(entity));
+                }
+                entity::s_newEntities.clear();
             }
 
-            // add entities
-            for (auto &entity : entity::s_newEntities)
-                entity::s_entities.push_back(std::move(entity));
-            entity::s_newEntities.clear();
-
-            for (auto &func : postComponentHooksCopy)
-                func();
-            for (auto &func : _postLoopExecutes)
-                func();
-
-            // frame-rate consistency
-            auto now = std::chrono::high_resolution_clock::now();
-            auto diff = now - currentFrameTime;
-            auto diffFromTarget = time::_targetDelay - diff;
-            time::_lastFrameSleep = std::chrono::duration<float>(diffFromTarget).count();
-            if (diffFromTarget.count() > 0)
-                sleepUntilExact_(now + diffFromTarget);
+            {
+                bench("postComponentHooks");
+                for (auto &func : postComponentHooksCopy)
+                    func();
+            }
+            {
+                bench("_postLoopExecutes");
+                for (auto &func : _postLoopExecutes)
+                    func();
+            }
+            {
+                bench("sleep");
+                // frame-rate consistency
+                auto now = std::chrono::high_resolution_clock::now();
+                auto diff = now - currentFrameTime;
+                auto diffFromTarget = time::_targetDelay - diff;
+                time::_lastFrameSleep = std::chrono::duration<float>(diffFromTarget).count();
+                if (diffFromTarget.count() > 0)
+                    sleepUntilExact_(now + diffFromTarget);
+            }
         }
-        hooksMutex.lock();
-        auto onExitHooksCopy = onExitHooks;
-        hooksMutex.unlock();
-        for (auto &func : onExitHooksCopy)
-            func();
+
+        {
+            bench("onExitHooks");
+            hooksMutex.lock();
+            auto onExitHooksCopy = onExitHooks;
+            hooksMutex.unlock();
+            for (auto &func : onExitHooksCopy)
+                func();
+        }
+
+        benchmark::printResultsToFile_();
     }
 
     // thread-safe. exists the application after the current frame is finished
@@ -435,7 +500,7 @@ class application
     }
 
   private:
-    static inline bool _isRunning;
+    static inline bool _isRunning = true;
 
     // commands to execute after each loop. resets on every iteration. it's entirely internal to this class
     static inline auto &_postLoopExecutes = *new std::vector<std::function<void()>>();

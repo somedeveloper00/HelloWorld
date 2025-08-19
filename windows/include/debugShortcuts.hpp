@@ -43,7 +43,7 @@ static inline void tick_()
     static auto deleteRandom = engine::input::key::d;
     static auto addTriangle = engine::input::key::t;
     static auto createRandomCount = 100;
-    static auto createRandomHugeCount = 1000;
+    static auto createRandomHugeCount = 1000000;
     static auto deleteRandomCount = 5;
 
     engine::graphics::clearColor.r = sin(engine::time::getTotalTime()) * sin(engine::time::getTotalTime());
@@ -143,7 +143,8 @@ static inline void tick_()
     else if (engine::input::isKeyJustDown(addTriangle))
     {
         bench("add triangle");
-        engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
+        for (size_t i = 0; i < 1000; i++)
+            engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
     }
 }
 } // namespace
