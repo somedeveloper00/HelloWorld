@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <numeric>
 #include <ranges>
 #include <ratio>
 #include <stdio.h>
@@ -21,7 +22,7 @@ struct benchmark final
     friend application;
 
     benchmark(const char *name)
-        : _name(name), _indent(s_indent++), _startTime(std::chrono::high_resolution_clock::now())
+        : _name(name), _indent(s_lastAddedIndent = s_indent++), _startTime(std::chrono::high_resolution_clock::now())
     {
     }
 
@@ -34,14 +35,32 @@ struct benchmark final
     {
         auto now = std::chrono::high_resolution_clock::now();
         auto diff = std::chrono::nanoseconds(now - _startTime);
-        auto elapsed = (diff).count();
+        size_t waste;
+        size_t elapsed;
+        if (--s_indent == s_lastAddedIndent)
+        {
+            // had no child benchmarks
+            elapsed = diff.count();
+            waste = 0;
+        }
+        else
+        {
+            // had child benchmarks
+            waste = 0;
+            for (size_t i = s_indent; i < s_benchmarkWastes.size(); i++)
+            {
+                waste += s_benchmarkWastes[i].count();
+                new (&s_benchmarkWastes[i]) std::chrono::nanoseconds(0);
+            }
+            elapsed = diff.count() - waste;
+        }
 
-        // append scope
+        // append to scopes list
         auto &frameRef = s_frames[s_framesIndex];
         if (frameRef.scopesCount >= frame::scopesSize)
             log::logError("[benchmark] scope overflow in frame {}. increase engine::benchmark::frame::scopesSize", frameRef.frameNumber);
         else
-            new (&frameRef.scopes[frameRef.scopesCount++]) scope(_name, _indent, elapsed, s_benchmarkWaste.count());
+            new (&frameRef.scopes[frameRef.scopesCount++]) scope(_name, _indent, elapsed, waste * 2);
         // go to next frame
         if (_indent == 0)
         {
@@ -57,11 +76,12 @@ struct benchmark final
             s_frames[s_framesIndex].scopesCount = 0;
         }
 
-        // handle wasted time
-        if (--s_indent == 0)
-            new (&s_benchmarkWaste) std::chrono::nanoseconds(0);
-        else
-            s_benchmarkWaste += std::chrono::high_resolution_clock::now() - now;
+        // append to benchmark waste time list
+        if (s_indent != 0)
+        {
+            s_benchmarkWastes.resize(s_indent + 1);
+            s_benchmarkWastes[s_indent] += std::chrono::high_resolution_clock::now() - now;
+        }
     }
 
   private:
@@ -74,7 +94,7 @@ struct benchmark final
     };
     struct frame
     {
-        constexpr static size_t scopesSize = 300000;
+        constexpr static size_t scopesSize = 1000000;
         size_t frameNumber = 0;
         scope scopes[scopesSize];
         size_t scopesCount = 0;
@@ -106,8 +126,10 @@ struct benchmark final
     // current global indent (parent/child relations)
     static inline unsigned char s_indent = 0;
 
+    static inline unsigned char s_lastAddedIndent;
+
     // wasted time spent for benchmarking. this is used to correct the reports
-    static inline std::chrono::nanoseconds s_benchmarkWaste{0};
+    static inline std::vector<std::chrono::nanoseconds> s_benchmarkWastes{};
 
     const char *_name;
     const unsigned char _indent;
@@ -143,8 +165,6 @@ struct benchmark final
                     if (mscope.name == sc.name && mscope.indent == sc.indent)
                     {
                         mscope.totalTime += sc.time;
-                        // if (mscope.totalInaccuracy > 1000000000)
-                        //     __debugbreak();
                         mscope.totalInaccuracy += sc.inaccuracy;
                         ++mscope.count;
                         goto nextScope;
