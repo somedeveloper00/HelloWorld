@@ -4,6 +4,3 @@
 [submodule "vendors/glfw"]
 	path = vendors/glfw
 	url = https://github.com/glfw/glfw
-[submodule "vendors/optick"]
-	path = vendors/optick
-	url = https://github.com/bombomby/optick

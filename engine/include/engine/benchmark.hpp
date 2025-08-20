@@ -20,8 +20,8 @@ struct benchmark final
 {
     friend application;
 
-    benchmark(const char *label)
-        : _label(label), _indent(s_indent++), _startTime(std::chrono::system_clock::now())
+    benchmark(const char *name)
+        : _name(name), _indent(s_indent++), _startTime(std::chrono::high_resolution_clock::now())
     {
     }
 
@@ -32,12 +32,17 @@ struct benchmark final
 
     ~benchmark()
     {
-        auto now = std::chrono::system_clock::now();
-        auto elapsed = std::chrono::duration<size_t, std::nano>(now - _startTime).count();
+        auto now = std::chrono::high_resolution_clock::now();
+        auto diff = std::chrono::nanoseconds(now - _startTime);
+        auto elapsed = (diff).count();
 
-        s_frames[s_framesIndex].scopes.emplace_back(scope{const_cast<char *>(_label), _indent, elapsed});
-
-        if (--s_indent == 0)
+        // append scope
+        auto &frameRef = s_frames[s_framesIndex];
+        if (frameRef.scopesCount >= frame::scopesSize)
+            log::logError("[benchmark] scope overflow in frame {}. increase engine::benchmark::frame::scopesSize", frameRef.frameNumber);
+        else
+            new (&frameRef.scopes[frameRef.scopesCount++]) scope(_name, _indent, elapsed, s_benchmarkWaste.count());
+        if (_indent == 0)
         {
             s_frames[s_framesIndex].frameNumber = s_totalFrames++;
             // frame is ended
@@ -48,48 +53,59 @@ struct benchmark final
                 s_framesIndex = 0;
                 s_framesRounded = true;
             }
-            s_frames[s_framesIndex].scopes.clear();
+            s_frames[s_framesIndex].scopesCount = 0;
         }
+
+        if (--s_indent == 0)
+            new (&s_benchmarkWaste) std::chrono::nanoseconds(0);
+        else
+            s_benchmarkWaste += std::chrono::high_resolution_clock::now() - now;
     }
 
   private:
     struct scope
     {
         const char *name;
-        const unsigned char indent;
-        const size_t time;
+        unsigned char indent;
+        size_t time;
+        size_t inaccuracy;
     };
     struct frame
     {
-        size_t frameNumber;
-        std::vector<scope> scopes;
+        constexpr static size_t scopesSize = 300000;
+        size_t frameNumber = 0;
+        scope scopes[scopesSize];
+        size_t scopesCount = 0;
     };
     struct merged_scope
     {
-        std::string name;
+        const char *name;
         unsigned char indent;
-        size_t total_time;
+        size_t totalTime;
+        size_t totalInaccuracy;
         size_t count;
     };
-    constexpr static size_t s_maxFrames = 100;
+    constexpr static size_t s_maxFrames = 50;
     static inline frame s_frames[s_maxFrames];
     static inline size_t s_framesIndex = 0;
     static inline bool s_framesRounded = false;
     static inline size_t s_totalFrames = 0;
     static inline unsigned char s_indent = 0;
+    static inline std::chrono::nanoseconds s_benchmarkWaste{0};
 
     const unsigned char _indent;
-    const char *_label;
-    const std::chrono::system_clock::time_point _startTime;
+    const char *_name;
+    const std::chrono::high_resolution_clock::time_point _startTime;
 
+    // called when the application is closing
     static inline void printResultsToFile_()
     {
 #if !BENCHMARK
         return;
 #endif
-        log::logInfo("writing benchmark results to file");
-        std::filesystem::create_directory(".bench/");
         const auto path = ".bench/dump_" + std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + ".txt";
+        log::logInfo("writing benchmark results to file \"{}\"", path);
+        std::filesystem::create_directory(".bench/");
         std::ofstream file(path, std::ios::app);
         if (!file)
         {
@@ -97,36 +113,35 @@ struct benchmark final
             return;
         }
 
-        if (s_framesRounded)
-        {
-            std::rotate(s_frames, &s_frames[s_framesIndex], &s_frames[s_maxFrames]);
-            s_framesIndex = s_maxFrames;
-        }
         for (size_t i = 0; i < s_framesIndex; ++i)
         {
             file << "frame " << s_frames[i].frameNumber << ":\n";
 
             // collapse repeated scopes (contiguous repeats) into merged_scope entries
             std::vector<merged_scope> merged{};
-            for (auto &sc : s_frames[i].scopes | std::ranges::views::reverse)
+            for (size_t j = s_frames[i].scopesCount; j-- > 0;)
             {
+                auto &sc = s_frames[i].scopes[j];
                 for (auto &mscope : merged | std::ranges::views::reverse)
                 {
                     if (mscope.name == sc.name && mscope.indent == sc.indent)
                     {
-                        mscope.total_time += sc.time;
+                        mscope.totalTime += sc.time;
+                        // if (mscope.totalInaccuracy > 1000000000)
+                        //     __debugbreak();
+                        mscope.totalInaccuracy += sc.inaccuracy;
                         ++mscope.count;
                         goto nextScope;
                     }
                 }
-                merged.push_back(merged_scope{std::string(sc.name), sc.indent, sc.time, 1});
+                merged.emplace_back(sc.name, sc.indent, sc.time, sc.inaccuracy, 1);
             nextScope:;
             }
 
             for (auto &scope : merged)
             {
                 // append to file
-                const auto str = std::format("    {}\"{}\": {} (x{})\n", std::string(scope.indent * 4, ' '), scope.name, static_cast<double>(scope.total_time) / 1000. / 1000., scope.count);
+                const auto str = std::format("    {}\"{}\": {} (x{}) (+-{})\n", std::string(scope.indent * 4, ' '), scope.name, static_cast<double>(scope.totalTime) / 1000. / 1000., scope.count, static_cast<double>(scope.totalInaccuracy) / 1000. / 1000.);
                 file << str;
             }
         }

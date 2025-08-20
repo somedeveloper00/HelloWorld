@@ -183,16 +183,12 @@ struct renderTriangle : public component
 
     void update_() override
     {
-        bench("renderTriangle::update");
-        transform *ptr;
-        ptr = getEntity()->ensureComponentExists<transform>().get();
-        auto &transformPtr = *ptr;
-        {
-            bench("moving triangle");
-            transformPtr.position.x = glm::sin((time::getTotalTime() - _startTime) * swaySpeed);
-            transformPtr.rotation = glm::rotate(transformPtr.rotation, time::getDeltaTime(), glm::vec3(0.f, 0.f, 1.f));
-            transformPtr.markDirtyRecursively();
-        }
+        if (time::getTotalFrames() % 2)
+            bench("renderTriangle::update");
+        auto &transformRef = *_transform.lock().get();
+        transformRef.position.x = glm::sin((time::getTotalTime() - _startTime) * swaySpeed);
+        transformRef.rotation = glm::rotate(transformRef.rotation, time::getDeltaTime(), glm::vec3(0.f, 0.f, 1.f));
+        transformRef.markDirtyRecursively();
     }
 };
 } // namespace engine::test
