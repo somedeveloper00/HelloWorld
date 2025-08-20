@@ -42,6 +42,7 @@ struct benchmark final
             log::logError("[benchmark] scope overflow in frame {}. increase engine::benchmark::frame::scopesSize", frameRef.frameNumber);
         else
             new (&frameRef.scopes[frameRef.scopesCount++]) scope(_name, _indent, elapsed, s_benchmarkWaste.count());
+        // go to next frame
         if (_indent == 0)
         {
             s_frames[s_framesIndex].frameNumber = s_totalFrames++;
@@ -56,6 +57,7 @@ struct benchmark final
             s_frames[s_framesIndex].scopesCount = 0;
         }
 
+        // handle wasted time
         if (--s_indent == 0)
             new (&s_benchmarkWaste) std::chrono::nanoseconds(0);
         else
@@ -85,16 +87,30 @@ struct benchmark final
         size_t totalInaccuracy;
         size_t count;
     };
+
+    // maximum number of frames to include in the report
     constexpr static size_t s_maxFrames = 50;
+
+    // reporting frames
     static inline frame s_frames[s_maxFrames];
+
+    // index of the current reporting frame
     static inline size_t s_framesIndex = 0;
+
+    // whether or not the maximum number of frames has been reached (in which case, we round the index)
     static inline bool s_framesRounded = false;
+
+    // total number of frames
     static inline size_t s_totalFrames = 0;
+
+    // current global indent (parent/child relations)
     static inline unsigned char s_indent = 0;
+
+    // wasted time spent for benchmarking. this is used to correct the reports
     static inline std::chrono::nanoseconds s_benchmarkWaste{0};
 
-    const unsigned char _indent;
     const char *_name;
+    const unsigned char _indent;
     const std::chrono::high_resolution_clock::time_point _startTime;
 
     // called when the application is closing
