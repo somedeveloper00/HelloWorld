@@ -47,12 +47,12 @@ struct benchmark final
         {
             // had child benchmarks
             waste = 0;
-            for (size_t i = s_indent; i < s_benchmarkWastes.size(); i++)
+            for (size_t i = s_indent + 1; i < s_benchmarkWastes.size(); i++)
             {
                 waste += s_benchmarkWastes[i].count();
                 new (&s_benchmarkWastes[i]) std::chrono::nanoseconds(0);
             }
-            elapsed = diff.count() - waste;
+            elapsed = diff.count() - 2 * waste;
         }
 
         // append to scopes list
@@ -60,7 +60,7 @@ struct benchmark final
         if (frameRef.scopesCount >= frame::scopesSize)
             log::logError("[benchmark] scope overflow in frame {}. increase engine::benchmark::frame::scopesSize", frameRef.frameNumber);
         else
-            new (&frameRef.scopes[frameRef.scopesCount++]) scope(_name, _indent, elapsed, waste * 2);
+            new (&frameRef.scopes[frameRef.scopesCount++]) scope(_name, _indent, elapsed, waste);
         // go to next frame
         if (_indent == 0)
         {
@@ -80,7 +80,7 @@ struct benchmark final
         if (s_indent != 0)
         {
             s_benchmarkWastes.resize(s_indent + 1);
-            s_benchmarkWastes[s_indent] += std::chrono::high_resolution_clock::now() - now;
+            s_benchmarkWastes[s_indent] += 2 * (std::chrono::high_resolution_clock::now() - now);
         }
     }
 
