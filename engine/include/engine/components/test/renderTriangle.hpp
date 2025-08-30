@@ -4,11 +4,10 @@
 #include "engine/benchmark.hpp"
 #include "engine/components/componentUtility.hpp"
 #include "engine/components/transform.hpp"
+#include "engine/ref.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/quaternion_transform.hpp"
-#include <algorithm>
 #include <glm/gtc/type_ptr.hpp>
-#include <memory>
 #include <mutex>
 
 namespace engine::test
@@ -19,9 +18,9 @@ struct renderTriangle : public component
     float swaySpeed = 1;
 
   private:
-    static inline auto &s_instances = *new std::vector<renderTriangle *>();
+    static inline auto &s_instances = *new quickVector<weakRef<renderTriangle>>();
     float _startTime;
-    std::weak_ptr<transform> _transform;
+    weakRef<transform> _transform;
 
     static inline void initialize_()
     {
@@ -146,14 +145,42 @@ struct renderTriangle : public component
 
             static std::vector<InstanceData> s_instanceDataList{};
 
+            application::hooksMutex.lock();
+            application::postComponentHooks.push_back([]() {
+                bench("update triangles");
+                auto *ptr = s_instances.data();
+                auto count = s_instances.size();
+                auto time = time::getTotalTime();
+                auto deltaTime = time::getDeltaTime();
+#pragma omp parallel for schedule(static)
+                for (signed long long i = 0; i < count; i++)
+                {
+                    renderTriangle &instance = *(renderTriangle *)ptr[i];
+                    transform &transformRef = *(transform *)instance._transform;
+                    transformRef.position.x = glm::sin((time - instance._startTime) * instance.swaySpeed);
+                    transformRef.rotation = glm::rotate(transformRef.rotation, deltaTime, glm::vec3(0.f, 0.f, 1.f));
+                    transformRef.markDirtyRecursively();
+                }
+            });
+            application::hooksMutex.unlock();
+
             graphics::opengl::onRendersMutex.lock();
             graphics::opengl::onRenders[0].push_back([]() {
                 bench("drawing render triangles");
                 // Upload matrices to GPU
                 s_instanceDataList.clear();
-                for (auto &instance : s_instances)
-                    if (auto tr = instance->_transform.lock())
-                        s_instanceDataList.push_back({tr->position, tr->rotation, tr->scale});
+                s_instanceDataList.resize(s_instances.size());
+                auto *dataPtr = s_instanceDataList.data();
+                auto size = s_instanceDataList.size();
+                auto *instancesPtr = s_instances.data();
+#pragma omp parallel for schedule(static)
+                for (signed long long i = 0; i < size; i++)
+                {
+                    transform &transformRef = *(transform *)instancesPtr[i]->_transform;
+                    dataPtr[i].position = transformRef.position;
+                    dataPtr[i].rotation = transformRef.rotation;
+                    dataPtr[i].scale = transformRef.scale;
+                }
                 glBindBuffer(GL_ARRAY_BUFFER, s_instancedVbo);
                 glBufferData(GL_ARRAY_BUFFER, s_instanceDataList.size() * sizeof(InstanceData), s_instanceDataList.data(), GL_DYNAMIC_DRAW);
                 glUseProgram(s_shaderProgram);
@@ -171,24 +198,14 @@ struct renderTriangle : public component
     void created_() override
     {
         initialize_();
-        s_instances.push_back(this);
+        s_instances.push_back(getWeakRefAs<renderTriangle>());
         _startTime = time::getTotalTime();
         _transform = getEntity()->ensureComponentExists<transform>();
     }
 
     void removed_() override
     {
-        s_instances.erase(std::remove(s_instances.begin(), s_instances.end(), this), s_instances.end());
-    }
-
-    void update_() override
-    {
-        if (time::getTotalFrames() % 2)
-            bench("renderTriangle::update");
-        auto &transformRef = *_transform.lock().get();
-        transformRef.position.x = glm::sin((time::getTotalTime() - _startTime) * swaySpeed);
-        transformRef.rotation = glm::rotate(transformRef.rotation, time::getDeltaTime(), glm::vec3(0.f, 0.f, 1.f));
-        transformRef.markDirtyRecursively();
+        s_instances.erase(getWeakRefAs<renderTriangle>());
     }
 };
 } // namespace engine::test

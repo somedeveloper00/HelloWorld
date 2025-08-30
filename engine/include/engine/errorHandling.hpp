@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine/log.hpp"
+#include <cassert>
+
 #ifdef _Win32
 #include <Windows.h>
 #endif
@@ -11,7 +14,7 @@ static inline void fatalAssert(bool condition, const char *const msg)
     if (!condition)
     {
         log::logError(msg);
-#ifndef NDEBUG
+#ifdef DEBUG
         assert(false);
 #elif _WIN32
         MessageBox(NULL, msg, "Fatal Error", MB_OK | MB_ICONERROR);

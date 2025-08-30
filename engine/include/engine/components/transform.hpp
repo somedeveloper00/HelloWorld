@@ -4,15 +4,16 @@
 #include "engine/app.hpp"
 #include "engine/benchmark.hpp"
 #include "engine/components/componentUtility.hpp"
+#include "engine/quickVector.hpp"
+#include "engine/ref.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
-#include <memory>
 
 namespace engine
 {
 struct transform : public component
 {
-    static inline auto &s_postUpdateHooks = *new std::vector<std::function<void(entity &)>>();
+    static inline auto &s_postUpdateHooks = *new quickVector<std::function<void(entity &)>>();
     glm::vec3 position{};
     glm::vec3 scale{1.f, 1.f, 1.f};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
@@ -59,40 +60,40 @@ struct transform : public component
     {
         {
             bench("ent.getComponent<transform>()");
-            if (auto ptr = ent.getComponent<transform>())
+            if (transform *ptr = ent.getComponent<transform>())
             {
                 bench("inner");
-                auto &ref = *ptr.get();
-                if (ref._dirty)
+                transform &transformRef = *ptr;
+                if (transformRef._dirty)
                 {
                     bench("update local and global matrices");
-                    // ref.translateMatrix = glm::translate(glm::mat4(1), ref.position);
-                    // ref.rotationMatrix = glm::mat4_cast(ref.rotation);
-                    // ref.scaleMatrix = glm::scale(glm::mat4(1), ref.scale);
-                    // ref.modelGlobalMatrix = parentModelGlobalMatrix = parentModelGlobalMatrix * ref.modelMatrix;
-                    ref._dirty = false;
+                    // transformRef.translateMatrix = glm::translate(glm::mat4(1), transformRef.position);
+                    // transformRef.rotationMatrix = glm::mat4_cast(transformRef.rotation);
+                    // transformRef.scaleMatrix = glm::scale(glm::mat4(1), transformRef.scale);
+                    // transformRef.modelGlobalMatrix = parentModelGlobalMatrix = parentModelGlobalMatrix * transformRef.modelMatrix;
+                    transformRef._dirty = false;
                     parentDirty = true;
                 }
                 else if (parentDirty)
                 {
                     bench("update global matrix");
-                    // ref.modelGlobalMatrix = parentModelGlobalMatrix * ref.modelMatrix;
+                    // transformRef.modelGlobalMatrix = parentModelGlobalMatrix * transformRef.modelMatrix;
                 }
             }
         }
         {
-            bench("postUpdateHooks");
-            for (auto &hook : s_postUpdateHooks)
-                hook(ent);
+            bench("transform's postUpdateHooks");
+            s_postUpdateHooks.forEach([&](const auto &hook) { hook(ent); });
         }
         for (size_t i = 0; i < ent.getChildrenCount(); i++)
-            updateModelMatricesRecursively_(*ent.getChildAt(i).get(), parentModelGlobalMatrix, parentDirty);
+            updateModelMatricesRecursively_(*(entity *)ent.getChildAt(i), parentModelGlobalMatrix, parentDirty);
     }
 
     void created_() override
     {
         initialize_();
-        if (getEntity()->getComponent<transform>())
+        auto trans = getEntity()->getComponent<transform>();
+        if (trans && trans != getWeakRef())
             log::logWarning("Cannot have more than one engine::transform in one entity. Only the first one will be used.");
     }
 };

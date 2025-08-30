@@ -2,21 +2,24 @@
 
 #include "benchmark.hpp"
 #include "common/typeHash.hpp"
+#include "ittnotify.h"
 #include "log.hpp"
+#include "quickVector.hpp"
+#include "ref.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <functional>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
+#include <tracy/Tracy.hpp>
+#include <type_traits>
 
 namespace engine
 {
-class entity;
-class application;
+struct entity;
+struct application;
 
 constexpr size_t notFound = (size_t)-1;
 
@@ -31,19 +34,25 @@ struct component
         _state = static_cast<State>(_state | State::Removing);
     }
 
-    // get shared_ptr to the entity owning this component. it's valid as long as the component exists in the entity hierarchy
-    std::shared_ptr<entity> getEntity()
+    // get weak reference to the entity owning this component. it's valid as long as the component exists in the entity hierarchy
+    weakRef<entity> &getEntity()
     {
-        return _entity.lock();
+        return _entity;
     }
 
-    // get std::weak_ptr to self. it's valid as long as the component exists in the entity hierarchy
-    std::weak_ptr<component> &getWeakPtr()
+    // get weak reference to self. it's valid as long as the component exists in the entity hierarchy
+    weakRef<component> &getWeakRef()
     {
         return _selfRef;
     }
+    template <typename T>
+        requires std::is_base_of_v<component, T>
+    weakRef<T> getWeakRefAs()
+    {
+        return *_selfRef.castTo<T>();
+    }
 
-  private:
+  protected:
     // gets called after creation as soon as all the base local variables are initialized and after the constructor
     virtual void created_() {};
 
@@ -53,15 +62,16 @@ struct component
     // gets called when the component is removed from the entity and base local variables are valid, and before the destructor is called
     virtual void removed_() {};
 
+  private:
     enum State : uint8_t
     {
         Active = 0,
         Removing = 1 << 0
     };
 
-    std::weak_ptr<entity> _entity;
+    weakRef<entity> _entity;
     State _state = State::Active;
-    std::weak_ptr<component> _selfRef;
+    weakRef<component> _selfRef{};
     size_t _typeHash;
 
     bool awaitingRemoval_() const
@@ -71,22 +81,20 @@ struct component
 };
 
 // an entity in the engine. it can have components and children entities
-class entity
+struct entity
 {
     friend application;
-
-  public:
     std::string name;
 
     // creates a new entity with the given name
-    static inline std::shared_ptr<entity> create(std::string &&name = "New Entity")
+    static inline weakRef<entity> create(std::string &&name = "New Entity")
     {
-        entity *newEntity = new entity(std::move(name));
-        std::shared_ptr<entity> sharedPtr{newEntity};
-        s_rootEntities.push_back(sharedPtr);
-        newEntity->_selfRef = sharedPtr;
-        s_newEntities.push_back(sharedPtr);
-        return sharedPtr;
+        s_newEntities.emplace_back(true);
+        ownRef<entity> &newEntity = s_newEntities.back();
+        s_rootEntities.emplace_back(newEntity);
+        newEntity->name = std::move(name);
+        newEntity->_selfRef = newEntity;
+        return newEntity;
     }
 
     static inline size_t getRootEntitiesCount() noexcept
@@ -94,12 +102,12 @@ class entity
         return s_rootEntities.size();
     }
 
-    static inline std::vector<std::shared_ptr<entity>> getRootEntities() noexcept
+    static inline quickVector<weakRef<entity>> getRootEntities() noexcept
     {
         return s_rootEntities;
     }
 
-    static inline std::shared_ptr<entity> &getRootEntityAt(const size_t index) noexcept
+    static inline weakRef<entity> &getRootEntityAt(const size_t index) noexcept
     {
         return s_rootEntities[index];
     }
@@ -109,18 +117,19 @@ class entity
         return s_entities.size() + s_newEntities.size();
     }
 
-    static inline std::vector<std::shared_ptr<entity>> &getEntities() noexcept
+    // creates a copy of the entities reference vector
+    static inline quickVector<weakRef<entity>> getEntities() noexcept
     {
         return s_entities;
     }
 
-    static inline std::shared_ptr<entity> getEntityAt(const size_t index) noexcept
+    static inline weakRef<entity> getEntityAt(const size_t index) noexcept
     {
         return index < s_entities.size() ? s_entities[index] : s_newEntities[index - s_entities.size()];
     }
 
     // creates a copy of the children vector
-    std::vector<std::shared_ptr<entity>> getChildren() const noexcept
+    quickVector<weakRef<entity>> getChildren() const noexcept
     {
         return _children;
     }
@@ -130,12 +139,12 @@ class entity
         return _children.size();
     }
 
-    std::shared_ptr<entity> &getChildAt(const size_t index) noexcept
+    weakRef<entity> getChildAt(const size_t index) noexcept
     {
         return _children[index];
     }
 
-    std::shared_ptr<entity> getParent() const noexcept
+    weakRef<entity> getParent() const noexcept
     {
         return _parent;
     }
@@ -143,31 +152,31 @@ class entity
     void remove() noexcept
     {
         _removing = true;
-        for (auto &child : _children)
+        _children.forEach([](const weakRef<entity> &child) {
             child->remove();
+        });
     }
 
-    void setParent(const std::shared_ptr<entity> &parent)
+    void setParent(const weakRef<entity> &parent)
     {
         if (_parent && !parent)
         {
-            auto ref = _selfRef.lock();
-            s_rootEntities.push_back(ref);
-            _parent->removeFromChildren_(ref);
+            s_rootEntities.emplace_back(_selfRef);
+            _parent->removeFromChildren_(_selfRef);
         }
         else if (!_parent && parent)
         {
-            auto ref = _selfRef.lock();
             // remove from root entities
-            s_rootEntities.erase(std::remove(s_rootEntities.begin(), s_rootEntities.end(), ref), s_rootEntities.end());
-            parent->_children.push_back(ref);
+            s_rootEntities.erase(_selfRef);
+            parent->_children.emplace_back(_selfRef);
         }
         _parent = parent;
     }
 
+    // gets or adds the requested component
     template <typename T, typename... Args>
         requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
-    std::shared_ptr<T> ensureComponentExists(Args &&...args)
+    weakRef<T> ensureComponentExists(Args &&...args)
     {
         if (auto r = getComponent<T>(args...))
             return r;
@@ -176,44 +185,52 @@ class entity
 
     template <typename T, typename... Args>
         requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
-    std::shared_ptr<T> addComponent(Args &&...args)
+    weakRef<T> addComponent(Args &&...args)
     {
-        std::shared_ptr<component> component{new T(std::forward<Args>(args)...)};
+        ownRef<T> component{true, std::forward<Args>(args)...};
         component->_entity = _selfRef;
         component->_selfRef = component;
         component->_typeHash = getTypeHash_<T>();
-        component->created_();
-        _newComponents.push_back(component);
-        return std::dynamic_pointer_cast<T>(component);
+        _newComponents.emplace_back(component);
+        _newComponents.back()->created_();
+        return component;
     }
 
+    // returns found component or nullptr
     template <typename T>
         requires std::is_base_of_v<component, T>
-    std::shared_ptr<T> getComponent() const
+    weakRef<T> getComponent() const
     {
         bench("getComponent");
         constexpr auto hash = getTypeHash_<T>();
-        for (auto &comp : _components)
-            if (comp->_typeHash == hash)
-                return std::static_pointer_cast<T>(comp);
-        for (auto &comp : _newComponents)
-            if (comp->_typeHash == hash)
-                return std::static_pointer_cast<T>(comp);
-        return nullptr;
+        ownRef<component> *result = _components.findIf([](const ownRef<component> &c) {
+            return c->_typeHash == hash;
+        });
+        if (result)
+            return *result->castTo<T>();
+        result = _newComponents.findIf([](const ownRef<component> &c) {
+            return c->_typeHash == hash;
+        });
+        if (result)
+            return *result->castTo<T>();
+        return {};
     }
 
     template <typename T>
         requires std::is_base_of_v<component, T>
-    void getComponents(std::vector<std::shared_ptr<T>> &vector)
+    void getComponents(quickVector<weakRef<T>> &result)
     {
         bench("getComponents");
         constexpr size_t hash = getTypeHash_<T>();
-        for (size_t i = 0; i < _components.size(); i++)
-            if (_components[i]->_typeHash == hash)
-                vector.push_back(std::static_pointer_cast<T>(_components[i]));
-        for (size_t i = 0; i < _newComponents.size(); i++)
-            if (_newComponents[i]->_typeHash == hash)
-                vector.push_back(std::static_pointer_cast<T>(_newComponents[i]));
+        static auto callback = [&](const ownRef<component> &comp) {
+            if (comp->_typeHash == hash)
+            {
+                ownRef<T> converted = comp.castTo<T>();
+                result.emplace_back(converted);
+            }
+        };
+        _components.forEach(callback);
+        _newComponents.forEach(callback);
     }
 
     bool isSelfActive() const noexcept
@@ -236,8 +253,7 @@ class entity
     {
         if (!_parent)
             return notFound;
-        auto ref = _selfRef.lock();
-        return std::find(_parent->_children.begin(), _parent->_children.end(), ref) - _parent->_children.begin();
+        return _parent->_children.findIndex(_selfRef);
     }
 
     void setSiblingIndex(size_t index) const
@@ -247,83 +263,73 @@ class entity
             engine::log::logError("trying to set the siblind of entity \"{}\" which does not have parent", name);
             return;
         }
-        auto ref = _selfRef.lock();
-        auto selfIt = std::find(_parent->_children.begin(), _parent->_children.end(), ref);
-        std::rotate(selfIt, selfIt + 1, _parent->_children.end());
+        auto *self = _parent->_children.find(_selfRef);
+        std::rotate(self, self + 1, _parent->_children.data() + _parent->_children.size());
     }
 
   private:
-    static inline auto &s_entities = *new std::vector<std::shared_ptr<entity>>();
-    static inline auto &s_newEntities = *new std::vector<std::shared_ptr<entity>>();
-    static inline auto &s_rootEntities = *new std::vector<std::shared_ptr<entity>>();
+    static inline auto &s_entities = *new quickVector<ownRef<entity>>();
+    static inline auto &s_newEntities = *new quickVector<ownRef<entity>>();
+    static inline auto &s_rootEntities = *new quickVector<weakRef<entity>>();
 
-    std::vector<std::shared_ptr<component>> _components{};
-    std::vector<std::shared_ptr<component>> _newComponents{};
-    std::vector<std::shared_ptr<entity>> _children{};
-    std::weak_ptr<entity> _selfRef;
-    std::shared_ptr<entity> _parent{};
+    quickVector<ownRef<component>> _components{};
+    quickVector<ownRef<component>> _newComponents{};
+    quickVector<weakRef<entity>> _children{};
+    weakRef<entity> _selfRef{};
+    weakRef<entity> _parent{};
     bool _removing = false;
     bool _active = true;
     bool _hierarchyActive = true;
 
-    entity(std::string &&name)
-        : name(std::move(name))
-    {
-    }
-
     void update_()
     {
-        for (auto &component : _components)
-            component->update_();
+        _components.forEach([](const ownRef<component> &comp) {
+            comp->update_();
+        });
     }
 
     void addNewComponents_()
     {
-        for (auto &component : _newComponents)
-            _components.push_back(std::move(component));
+        _components.reserve(_components.size() + _newComponents.size());
+        _newComponents.forEach([&](const ownRef<component> &comp) {
+            _components.emplace_back(std::move(comp));
+        });
         _newComponents.clear();
     }
 
     void removeComponents_()
     {
-        size_t write = 0;
-        for (size_t read = 0; read < _components.size(); ++read)
-        {
-            auto &comp = _components[read];
+        _components.eraseIf([](const ownRef<component> &comp) {
+            return false;
             if (comp->awaitingRemoval_())
             {
                 comp->removed_();
-                continue;
+                return true;
             }
-            if (write != read)
-                _components[write] = std::move(comp);
-            ++write;
-        }
-        _components.resize(write);
+        });
     }
 
     void removed_()
     {
-        auto ref = _selfRef.lock();
         if (_parent)
-            _parent->removeFromChildren_(ref);
-        // remove from roots
-        s_rootEntities.erase(std::remove(s_rootEntities.begin(), s_rootEntities.end(), ref), s_rootEntities.end());
-        // remove all components
-        for (auto &comp : _components)
+            _parent->removeFromChildren_(_selfRef);
+        s_rootEntities.erase(_selfRef);
+        _components.forEachAndClear([](const ownRef<component> &comp) {
             comp->removed_();
+        });
     }
 
     void setHierarchyActive_(const bool active)
     {
         _hierarchyActive = active;
-        for (auto &child : _children)
+        _children.forEach([active](const weakRef<entity> &child) {
             child->setHierarchyActive_(active);
+        });
     }
 
-    void removeFromChildren_(std::shared_ptr<entity> entity)
+    void removeFromChildren_(const weakRef<entity> &entity)
     {
-        _children.erase(std::remove(_children.begin(), _children.end(), entity), _children.end());
+        _children.erase(entity);
     }
 };
 
@@ -365,39 +371,39 @@ class time
     }
 
   private:
-    static inline int _targetFps = 30;
-    static inline std::chrono::duration<float> _targetDelay{1 / 30.f};
+    static inline int _targetFps = 120;
+    static inline std::chrono::duration<float> _targetDelay{1 / 120.f};
     static inline float _totalTime;
     static inline size_t _totalFrames;
     static inline float _deltaTime;
     static inline float _lastFrameSleep;
 };
 
-class application
+struct application
 {
-  public:
     application() = delete;
 
     // hooks to execute before component updates in the loop
-    static inline auto &preComponentHooks = *new std::vector<std::function<void()>>();
+    static inline auto &preComponentHooks = *new quickVector<std::function<void()>>();
 
     // hooks to execute after component updates in the loop
-    static inline auto &postComponentHooks = *new std::vector<std::function<void()>>();
+    static inline auto &postComponentHooks = *new quickVector<std::function<void()>>();
 
     // hooks to execute after the application is closed
-    static inline auto &onExitHooks = *new std::vector<std::function<void()>>();
+    static inline auto &onExitHooks = *new quickVector<std::function<void()>>();
 
     // for function pointer lists in this class
     static inline std::mutex hooksMutex;
 
     static inline void run()
     {
+        TracyPlotConfig(s_tracyEntityCountName, tracy::PlotFormatType::Number, false, false, tracy::Color::AliceBlue);
         auto lastFrameTime = std::chrono::high_resolution_clock::now();
         auto currentFrameTime = std::chrono::high_resolution_clock::now();
 
         while (_isRunning)
         {
-            bench("main loop");
+            __itt_frame_begin_v3(benchmark::s_vtuneDomain, 0);
             currentFrameTime = std::chrono::high_resolution_clock::now();
             time::_deltaTime = (currentFrameTime - lastFrameTime).count() / 1e9f; // convert to seconds
             time::_totalTime += time::_deltaTime;
@@ -412,62 +418,53 @@ class application
             _postLoopExecutes.clear();
             hooksMutex.unlock();
 
-            for (auto &func : preComponentHooksCopy)
-                func();
+            preComponentHooksCopy.forEach([](const auto &func) { func(); });
 
             {
                 bench("handling entities");
                 {
                     bench("updating entities");
-                    for (auto &entities : entity::s_entities)
-                        entities->update_();
+                    entity::s_entities.forEachParallel([](const weakRef<entity> &entity) {
+                        entity->update_();
+                    });
                 }
                 {
-                    bench("removing components");
-                    for (auto &entities : entity::s_entities)
-                        entities->removeComponents_();
-                }
-                {
-                    bench("adding components");
-                    for (auto &entities : entity::s_entities)
-                        entities->addNewComponents_();
+                    bench("adding/removing components");
+                    entity::s_entities.forEachParallel([](const weakRef<entity> &entity) {
+                        entity->removeComponents_();
+                        entity->addNewComponents_();
+                    });
                 }
 
                 {
                     bench("removing entities");
-                    // remove entities
-                    entity::s_entities.erase(
-                        std::remove_if(
-                            entity::s_entities.begin(), entity::s_entities.end(),
-                            [](std::shared_ptr<entity> &testEntity) {
-                                if (testEntity->_removing)
-                                {
-                                    testEntity->removed_();
-                                    return true;
-                                }
-                                return false;
-                            }),
-                        entity::s_entities.end());
+                    entity::s_entities.eraseIfUnordered([](const weakRef<entity> &entity) {
+                        if (entity->_removing)
+                        {
+                            entity->removed_();
+                            return true;
+                        }
+                        return false;
+                    });
                 }
 
-                // add entities
                 {
                     bench("adding new entities");
-                    for (auto &entity : entity::s_newEntities)
-                        entity::s_entities.push_back(std::move(entity));
+                    entity::s_entities.reserve(entity::s_entities.size() + entity::s_newEntities.size());
+                    entity::s_newEntities.forEachAndClear([](const ownRef<entity> &entity) {
+                        entity::s_entities.emplace_back(std::move(entity));
+                    });
                 }
-                entity::s_newEntities.clear();
             }
+            TracyPlot(s_tracyEntityCountName, static_cast<long long>(entity::getEntitiesCount()));
 
             {
                 bench("postComponentHooks");
-                for (auto &func : postComponentHooksCopy)
-                    func();
+                postComponentHooksCopy.forEach([](const auto &func) { func(); });
             }
             {
                 bench("_postLoopExecutes");
-                for (auto &func : _postLoopExecutes)
-                    func();
+                postLoopExecutesCopy.forEach([](const auto &func) { func(); });
             }
             {
                 bench("sleep");
@@ -479,6 +476,8 @@ class application
                 if (diffFromTarget.count() > 0)
                     sleepUntilExact_(now + diffFromTarget);
             }
+            __itt_frame_end_v3(benchmark::s_vtuneDomain, 0);
+            FrameMark;
         }
 
         {
@@ -486,11 +485,8 @@ class application
             hooksMutex.lock();
             auto onExitHooksCopy = onExitHooks;
             hooksMutex.unlock();
-            for (auto &func : onExitHooksCopy)
-                func();
+            onExitHooksCopy.forEach([](const auto &func) { func(); });
         }
-
-        benchmark::printResultsToFile_();
     }
 
     // thread-safe. exists the application after the current frame is finished
@@ -503,7 +499,8 @@ class application
     static inline bool _isRunning = true;
 
     // commands to execute after each loop. resets on every iteration. it's entirely internal to this class
-    static inline auto &_postLoopExecutes = *new std::vector<std::function<void()>>();
+    static inline auto &_postLoopExecutes = *new quickVector<std::function<void()>>();
+    static inline const char *s_tracyEntityCountName = "entity count";
 
     static inline void sleepUntilExact_(const auto time)
     {

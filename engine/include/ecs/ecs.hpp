@@ -518,7 +518,7 @@ struct World
 #pragma omp parallel for schedule(static)
                 for (signed long long j = 0; j < archetype.getRowsCount(); j++)
                 {
-                    Entity entity{j, archetype.hash, _ver};
+                    Entity entity{static_cast<size_t>(j), archetype.hash, _ver};
                     std::invoke(
                         std::forward<Func>(func),
                         entity,

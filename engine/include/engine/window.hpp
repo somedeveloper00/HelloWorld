@@ -8,6 +8,7 @@
 #include "app.hpp"
 #include "benchmark.hpp"
 #include "data.hpp"
+#include "engine/benchmark.hpp"
 #include "errorHandling.hpp"
 #include "log.hpp"
 #include <cstddef>
@@ -746,6 +747,7 @@ struct graphics final
 
         static inline void tick_()
         {
+            bench("opengl rendering");
             glClearColor(graphics::clearColor.r, graphics::clearColor.g, graphics::clearColor.b, graphics::clearColor.a);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

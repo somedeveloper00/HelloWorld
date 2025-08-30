@@ -1,3 +1,4 @@
+#pragma once
 static constexpr size_t fnv1a_64_(const char *s, size_t count)
 {
     size_t hash = 0xcbf29ce484222325ULL;

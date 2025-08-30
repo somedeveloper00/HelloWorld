@@ -3,7 +3,6 @@
 #include "componentUtility.hpp"
 #include "engine/app.hpp"
 #include "transform.hpp"
-#include <memory>
 
 namespace engine
 {
@@ -12,7 +11,7 @@ struct camera : public component
     glm::mat4 viewMatrix{};
 
   private:
-    std::weak_ptr<transform> _transformPtr;
+    weakRef<transform> _transformPtr;
 
     static inline void initialize_()
     {
@@ -22,10 +21,7 @@ struct camera : public component
     void created_() override
     {
         initialize_();
-        std::shared_ptr<transform> ptr;
-        if ((ptr = getEntity()->getComponent<transform>()))
-            ptr = getEntity()->addComponent<transform>();
-        _transformPtr = ptr;
+        _transformPtr = getEntity()->ensureComponentExists<transform>();
     }
 };
 } // namespace engine

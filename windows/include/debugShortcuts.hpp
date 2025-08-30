@@ -4,6 +4,8 @@
 #include "engine/benchmark.hpp"
 #include "engine/components/test/renderTriangle.hpp"
 #include "engine/log.hpp"
+#include "engine/quickVector.hpp"
+#include "engine/ref.hpp"
 #include "engine/window.hpp"
 #include <cmath>
 
@@ -15,7 +17,7 @@ static inline void createRandomEntities_(const size_t count)
     for (size_t i = 0; i < count; i++)
     {
         auto r = rand() % (engine::entity::getEntitiesCount() + 1);
-        auto parent = r == engine::entity::getEntitiesCount() ? nullptr : engine::entity::getEntityAt(r);
+        auto parent = r == engine::entity::getEntitiesCount() ? engine::weakRef<engine::entity>{} : engine::entity::getEntityAt(r);
         auto newEntity = engine::entity::create("random " + std::to_string(++id));
         newEntity->setParent(parent);
     }
@@ -49,7 +51,6 @@ static inline void tick_()
     engine::graphics::clearColor.r = sin(engine::time::getTotalTime()) * sin(engine::time::getTotalTime());
     engine::graphics::clearColor.g = cos(2 * engine::time::getTotalTime()) * cos(2 * engine::time::getTotalTime());
     engine::graphics::clearColor.b = engine::time::getTotalTime() - (float)(int)engine::time::getTotalTime();
-    // engine::log::logInfo("color changed to {}", engine::graphics::clearColor);
 
     if (engine::input::isKeyJustDown(close))
     {
@@ -71,11 +72,11 @@ static inline void tick_()
             size_t depth = 0;
             auto print = [&depth](engine::entity *entity) {
                 std::string componentsStr;
-                std::vector<std::shared_ptr<engine::component>> components;
+                engine::quickVector<engine::weakRef<engine::component>> components;
                 entity->getComponents(components);
                 for (size_t i = 0; i < components.size(); i++)
                 {
-                    auto &comp = *components[i].get();
+                    engine::component &comp = *(engine::component *)components[i];
                     componentsStr += ((char *)typeid(comp).name() + 6);
                     if (i != components.size() - 1)
                         componentsStr += ", ";
@@ -84,14 +85,14 @@ static inline void tick_()
             };
             for (size_t i = 0; i < rootEntities.size(); i++)
             {
-                engine::entity *current = rootEntities[i].get();
+                engine::entity *current = rootEntities[i];
                 while (true)
                 {
                     print(current);
                     auto children = current->getChildren();
                     if (children.size() > 0)
                     {
-                        current = children[0].get();
+                        current = children[0];
                         depth++;
                         continue;
                     }
@@ -104,12 +105,12 @@ static inline void tick_()
                         auto siblings = parent->getChildren();
                         if (siblingIndex >= siblings.size() - 1)
                         {
-                            current = parent.get();
+                            current = parent;
                             depth--;
                         }
                         else
                         {
-                            current = siblings[siblingIndex + 1].get();
+                            current = siblings[siblingIndex + 1];
                             goto nextIter;
                         }
                     }
@@ -142,9 +143,9 @@ static inline void tick_()
     }
     else if (engine::input::isKeyJustDown(addTriangle))
     {
-        bench("add triangle");
-        for (size_t i = 0; i < 1000; i++)
+        for (size_t i = 0; i < 200000; i++)
             engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
+        __itt_resume();
     }
 }
 } // namespace
