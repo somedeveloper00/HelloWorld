@@ -146,7 +146,7 @@ struct ref
     // casts to another ref type. returns empty ref if this instance is an empty ref already.
     // uses reinterpret_cast, so no runtime checks are performed
     template <typename OtherT>
-    ref<OtherT, Owner> *castTo() const
+    ref<OtherT, Owner> *as() const
     {
         if constexpr (!Owner)
             if (!this)
@@ -213,7 +213,7 @@ struct ref
     {
         if constexpr (Owner)
             return static_cast<T *>(_holderPtr->objectPtr);
-        return this ? static_cast<T *>(_holderPtr->objectPtr) : nullptr;
+        return this && _holderPtr ? static_cast<T *>(_holderPtr->objectPtr) : nullptr;
     }
 
     template <typename OtherT, bool OtherOwner>

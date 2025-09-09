@@ -7,10 +7,15 @@
 
 namespace engine
 {
+// represents an RGBA (0-1) color
 struct color final
 {
     float r, g, b, a;
-    color(float r, float g, float b, float a = 1.f) : r(r), g(g), b(b), a(a)
+
+    color() = default;
+
+    color(float r, float g, float b, float a = 1.f)
+        : r(r), g(g), b(b), a(a)
     {
     }
 

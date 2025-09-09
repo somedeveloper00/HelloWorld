@@ -1,10 +1,8 @@
 #pragma once
 
+#include "common/componentUtils.hpp"
 #include "engine/app.hpp"
-#include "engine/benchmark.hpp"
-#include "engine/components/componentUtility.hpp"
 #include "engine/components/transform.hpp"
-#include "engine/ref.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/quaternion_transform.hpp"
 #include <glm/gtc/type_ptr.hpp>
@@ -14,6 +12,8 @@ namespace engine::test
 {
 struct renderTriangle : public component
 {
+    createTypeInformation(renderTriangle, component);
+
     friend entity;
     float swaySpeed = 1;
 
@@ -24,7 +24,7 @@ struct renderTriangle : public component
 
     static inline void initialize_()
     {
-        executeOnce();
+        ensureExecutesOnce();
         // initialize
         if (graphics::getRenderer() == graphics::renderer::opengl)
         {
@@ -159,13 +159,12 @@ struct renderTriangle : public component
                     transform &transformRef = *(transform *)instance._transform;
                     transformRef.position.x = glm::sin((time - instance._startTime) * instance.swaySpeed);
                     transformRef.rotation = glm::rotate(transformRef.rotation, deltaTime, glm::vec3(0.f, 0.f, 1.f));
-                    transformRef.markDirtyRecursively();
+                    transformRef.markDirty();
                 }
             });
             application::hooksMutex.unlock();
 
-            graphics::opengl::onRendersMutex.lock();
-            graphics::opengl::onRenders[0].push_back([]() {
+            graphics::opengl::addRendererHook(0, []() {
                 bench("drawing render triangles");
                 // Upload matrices to GPU
                 s_instanceDataList.clear();
@@ -191,7 +190,6 @@ struct renderTriangle : public component
                 glUseProgram(0);
                 glBindVertexArray(0);
             });
-            graphics::opengl::onRendersMutex.unlock();
         }
     }
 

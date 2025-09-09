@@ -1,7 +1,7 @@
 #pragma once
 
 #include "benchmark.hpp"
-#include "common/typeHash.hpp"
+#include "common/typeInfo.hpp"
 #include "ittnotify.h"
 #include "log.hpp"
 #include "quickVector.hpp"
@@ -26,6 +26,7 @@ constexpr size_t notFound = (size_t)-1;
 // a component belonging to an entity. it can be used to add functionality to the entity
 struct component
 {
+    createBaseTypeInformation(component);
     friend entity;
 
     // marks this component for removal. it will be removed after the current frame is finished (before the application::postComponentHooks)
@@ -49,7 +50,17 @@ struct component
         requires std::is_base_of_v<component, T>
     weakRef<T> getWeakRefAs()
     {
-        return *_selfRef.castTo<T>();
+        return *_selfRef.as<T>();
+    }
+
+    void setEnabled(const bool enabled) noexcept
+    {
+        _state = enabled ? State::Enabling : State::Disabling;
+    }
+
+    bool getDisabled() const noexcept
+    {
+        return _state == State::Enabled;
     }
 
   protected:
@@ -62,17 +73,24 @@ struct component
     // gets called when the component is removed from the entity and base local variables are valid, and before the destructor is called
     virtual void removed_() {};
 
+    // gets called when the component is enabled. it's always called after created_
+    virtual void enabled_() {};
+
+    // gets called when the component is disabled. it's always called before removed_
+    virtual void disabled_() {};
+
   private:
     enum State : uint8_t
     {
-        Active = 0,
-        Removing = 1 << 0
+        Enabled = 0,
+        Removing = 1 << 0,
+        Enabling = 1 << 1,
+        Disabling = 1 << 2,
     };
 
     weakRef<entity> _entity;
-    State _state = State::Active;
+    State _state = State::Enabled;
     weakRef<component> _selfRef{};
-    size_t _typeHash;
 
     bool awaitingRemoval_() const
     {
@@ -97,11 +115,18 @@ struct entity
         return newEntity;
     }
 
+    template <typename Func>
+    static inline void forEachRootEntity(Func &&func)
+    {
+        s_rootEntities.forEach(std::forward<Func>(func));
+    }
+
     static inline size_t getRootEntitiesCount() noexcept
     {
         return s_rootEntities.size();
     }
 
+    // creates a copy of the root entities vector and returns it
     static inline quickVector<weakRef<entity>> getRootEntities() noexcept
     {
         return s_rootEntities;
@@ -134,6 +159,20 @@ struct entity
         return _children;
     }
 
+    // executes function on all children (cannot modify the children during this)
+    template <typename Func>
+    void forEachChild(Func &&func)
+    {
+        _children.forEach(std::forward<Func>(func));
+    }
+
+    // executes function on all children (cannot modify the children during this)
+    template <typename Func>
+    void forEachChild(Func &&func) const
+    {
+        _children.forEach(func);
+    }
+
     size_t getChildrenCount() const noexcept
     {
         return _children.size();
@@ -159,6 +198,11 @@ struct entity
 
     void setParent(const weakRef<entity> &parent)
     {
+        if (parent == _selfRef)
+        {
+            log::logError("cannot set entity as parent of itself: \"{}\"", name);
+            return;
+        }
         if (_parent && !parent)
         {
             s_rootEntities.emplace_back(_selfRef);
@@ -175,24 +219,26 @@ struct entity
 
     // gets or adds the requested component
     template <typename T, typename... Args>
-        requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
+        requires std::is_base_of_v<component, T> && std::is_constructible_v<T, Args...>
     weakRef<T> ensureComponentExists(Args &&...args)
     {
+        assertComponentTypeValidity_<T>();
         if (auto r = getComponent<T>(args...))
             return r;
         return addComponent<T>(args...);
     }
 
     template <typename T, typename... Args>
-        requires std::constructible_from<T, Args...> && std::is_base_of_v<component, T>
+        requires std::is_base_of_v<component, T> && std::is_constructible_v<T, Args...>
     weakRef<T> addComponent(Args &&...args)
     {
+        assertComponentTypeValidity_<T>();
         ownRef<T> component{true, std::forward<Args>(args)...};
         component->_entity = _selfRef;
         component->_selfRef = component;
-        component->_typeHash = getTypeHash_<T>();
         _newComponents.emplace_back(component);
         _newComponents.back()->created_();
+        _newComponents.back()->enabled_();
         return component;
     }
 
@@ -201,18 +247,12 @@ struct entity
         requires std::is_base_of_v<component, T>
     weakRef<T> getComponent() const
     {
-        bench("getComponent");
-        constexpr auto hash = getTypeHash_<T>();
-        ownRef<component> *result = _components.findIf([](const ownRef<component> &c) {
-            return c->_typeHash == hash;
-        });
-        if (result)
-            return *result->castTo<T>();
-        result = _newComponents.findIf([](const ownRef<component> &c) {
-            return c->_typeHash == hash;
-        });
-        if (result)
-            return *result->castTo<T>();
+        for (size_t i = 0; i < _components.size(); i++)
+            if (isOfType<T>((component &)(_components[i])))
+                return _components[i]->getWeakRefAs<T>();
+        for (size_t i = 0; i < _newComponents.size(); i++)
+            if (isOfType<T>((component &)(_newComponents[i])))
+                return _newComponents[i]->getWeakRefAs<T>();
         return {};
     }
 
@@ -220,17 +260,41 @@ struct entity
         requires std::is_base_of_v<component, T>
     void getComponents(quickVector<weakRef<T>> &result)
     {
-        bench("getComponents");
-        constexpr size_t hash = getTypeHash_<T>();
-        static auto callback = [&](const ownRef<component> &comp) {
-            if (comp->_typeHash == hash)
-            {
-                ownRef<T> converted = comp.castTo<T>();
-                result.emplace_back(converted);
-            }
-        };
-        _components.forEach(callback);
-        _newComponents.forEach(callback);
+        for (size_t i = 0; i < _components.size(); i++)
+            if (isOfType<T>((component &)(_components[i])))
+                result.push_back(_components[i]->getWeakRefAs<T>());
+        for (size_t i = 0; i < _newComponents.size(); i++)
+            if (isOfType<T>((component &)(_newComponents[i])))
+                result.push_back(_newComponents[i]->getWeakRefAs<T>());
+    }
+
+    // returns found component in self or the first one found in parents, or nullptr
+    template <typename T>
+        requires std::is_base_of_v<component, T>
+    weakRef<T> getComponentInParent() const
+    {
+        const entity *current = this;
+        do
+        {
+            weakRef<T> result = current->getComponent<T>();
+            if (result)
+                return result;
+            current = current->_parent;
+        } while (current);
+        return {};
+    }
+
+    // returns found components in self and in parents
+    template <typename T>
+        requires std::is_base_of_v<component, T>
+    void getComponentsInParent(quickVector<weakRef<T>> &result)
+    {
+        const entity *current = this;
+        do
+        {
+            getComponents(result);
+            current = current->_parent;
+        } while (current);
     }
 
     bool isSelfActive() const noexcept
@@ -281,6 +345,14 @@ struct entity
     bool _active = true;
     bool _hierarchyActive = true;
 
+    // static_asserts for validity checks on component types
+    template <typename T>
+    static inline void assertComponentTypeValidity_()
+    {
+        static_assert(std::is_base_of_v<component, T>, "you can only add components that are derived from engine::component");
+        static_assert(T::c_hasBase, "you should use createTypeInformation(T, component) where T is your component type, for components.");
+    }
+
     void update_()
     {
         _components.forEach([](const ownRef<component> &comp) {
@@ -303,8 +375,25 @@ struct entity
             return false;
             if (comp->awaitingRemoval_())
             {
+                comp->disabled_();
                 comp->removed_();
                 return true;
+            }
+        });
+    }
+
+    void updateComponentStates_()
+    {
+        _components.forEach([](const ownRef<component> &comp) {
+            if (comp->_state == component::State::Enabling)
+            {
+                comp->_state = component::State::Enabled;
+                comp->enabled_();
+            }
+            else if (comp->_state == component::State::Disabling)
+            {
+                comp->_state = component::State::Enabled;
+                comp->disabled_();
             }
         });
     }
@@ -429,10 +518,11 @@ struct application
                     });
                 }
                 {
-                    bench("adding/removing components");
+                    bench("updating component states");
                     entity::s_entities.forEachParallel([](const weakRef<entity> &entity) {
                         entity->removeComponents_();
                         entity->addNewComponents_();
+                        entity->updateComponentStates_();
                     });
                 }
 

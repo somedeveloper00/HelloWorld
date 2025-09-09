@@ -1,5 +1,6 @@
 #pragma once
 
+#include "logFormats/glmLogFormats.hpp" // for glm formats
 #include <cstdio>
 #include <format>
 #include <stdio.h>

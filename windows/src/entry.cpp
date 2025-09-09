@@ -1,14 +1,19 @@
+#include "animateTransform.hpp"
+#include "common/typeInfo.hpp"
 #include "debugShortcuts.hpp"
 #include "engine/app.hpp"
 #include "engine/benchmark.hpp"
 #include "engine/components/camera.hpp"
 #include "engine/components/test/renderTriangle.hpp"
+#include "engine/components/ui/canvasRendering.hpp"
+#include "engine/components/ui/uiImage.hpp"
 #include "engine/log.hpp"
 #include "engine/ref.hpp"
 #include "engine/window.hpp"
 
 struct printHelloOnKey : public engine::component
 {
+    createTypeInformation(printHelloOnKey, engine::component);
     engine::input::key key;
 
   private:
@@ -19,32 +24,20 @@ struct printHelloOnKey : public engine::component
     }
 };
 
-struct A
+struct B
 {
-    int a = 0, b = 0, c = 0;
-    A() = default;
-    A(int a, int b, int c)
-        : a(a), b(b), c(c)
-    {
-    }
+    createBaseTypeInformation(B);
+    int a = 0;
+    int b = 1;
 };
-
-struct B : public A
+struct A : public B
 {
-    float d = 0;
-    B() = default;
-    B(int a, int b, int c, float d)
-        : A(a, b, c), d(d)
-    {
-    }
+    createTypeInformation(A, B);
 };
-
-engine::ownRef<B> getA()
+struct C : public B
 {
-    engine::ownRef<B> a{true, 1, 2, 3, 5.f};
-    return a;
-}
-
+    createTypeInformation(C, B);
+};
 int main()
 {
     __itt_pause();
@@ -54,6 +47,26 @@ int main()
     engine::entity::create("print test")->addComponent<printHelloOnKey>()->key = engine::input::key::p;
     engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
     engine::entity::create("camera")->addComponent<engine::camera>();
+
+    auto canvasEntity = engine::entity::create("main canvas");
+    canvasEntity->addComponent<engine::ui::canvas>();
+    auto imageEntity = engine::entity::create("image");
+    imageEntity->setParent(canvasEntity);
+    imageEntity->addComponent<engine::ui::uiImage>()->color = {1, 0, 0, 1};
+
+    auto imageEntity2 = engine::entity::create("image-inner");
+    imageEntity2->setParent(imageEntity);
+    imageEntity2->addComponent<animateTransform>()->rotationValue = 1.f;
+    imageEntity2->addComponent<engine::ui::uiImage>()->color = {0, 0, 0, 1};
+    {
+        auto ref = imageEntity2->getComponent<engine::ui::uiTransform>();
+        ref->deltaSize = {-0.2f, -0.2f};
+        ref->position.x += 0.1f;
+        ref->position.y += 0.1f;
+        ref->position.z -= 1;
+        // ref->rotation = glm::rotate(ref->rotation, 45.f, glm::vec3(0, 0, 1.f));
+    }
+
     engine::time::setTargetFps(120);
     engine::application::run();
 }

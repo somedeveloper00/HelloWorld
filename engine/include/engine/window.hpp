@@ -9,6 +9,7 @@
 #include "benchmark.hpp"
 #include "data.hpp"
 #include "engine/benchmark.hpp"
+#include "engine/quickVector.hpp"
 #include "errorHandling.hpp"
 #include "log.hpp"
 #include <cstddef>
@@ -589,7 +590,6 @@ struct graphics final
         _initialized = true;
         s_name = name;
         s_renderer = renderer;
-        s_windowSize = size;
 
 // create window
 #ifndef NDEBUG
@@ -604,9 +604,6 @@ struct graphics final
         s_window = glfwCreateWindow(size.x, size.y, name.c_str(), NULL, NULL);
         fatalAssert(s_window != nullptr, "glfwCreateWindow failed");
         glfwMakeContextCurrent(s_window);
-
-        // update dpi
-        glfwGetWindowContentScale(s_window, &s_monitorSize.x, &s_monitorSize.y);
 
         input::initialize_(s_window);
 
@@ -631,9 +628,10 @@ struct graphics final
         return s_renderer;
     }
 
-    static inline glm::vec2 getSize() noexcept
+    // get window size in pixels
+    static inline glm::ivec2 getSize() noexcept
     {
-        return s_windowSize;
+        return s_frameBufferSize;
     }
 
     struct opengl final
@@ -641,11 +639,17 @@ struct graphics final
         opengl() = delete;
         friend graphics;
 
+        // best not to use it directly. see addRendererHook and removeRendererHook.
         // executes when rendering a frame. if you subscribe, you should also unsubscribe later.
         // order of execution is from 0 to last.
         // feel free to insert new elements.
         // executes during application::postComponentHooks phase
-        static inline auto &onRenders = *new std::vector<std::vector<std::function<void()>>>{{}};
+        // cannot be modified during its execution (markable by waiting for onRendersMutex)
+        static inline auto &onRenders = *new quickVector<quickVector<std::function<void()>>>{
+            true,
+            quickVector<std::function<void()>>{8},
+            quickVector<std::function<void()>>{8},
+            quickVector<std::function<void()>>{8}};
         static inline std::mutex onRendersMutex;
 
         // compiles the source vertex shader and the source fragment shader, links them to a program and returns the program, or 0/GL_FALSE if failed
@@ -713,6 +717,32 @@ struct graphics final
             return shader;
         }
 
+        // insert a new render hook
+        template <typename Func>
+        static inline void addRendererHook(const size_t order, Func &&func)
+        {
+            onRendersMutex.lock();
+            while (onRenders.size() <= order)
+                onRenders.emplace_back(4);
+            onRenders[order].emplace_back(std::forward<Func>(func));
+            onRendersMutex.unlock();
+        }
+
+        // remove a render hook
+        template <typename Func>
+        static inline void removeRendererHook(const size_t order, Func &&func)
+        {
+            onRendersMutex.lock();
+            while (onRenders.size() <= order)
+                return;
+            auto target = std::function<void()>(std::forward<Func>(func)).target<void (*)()>();
+            onRenders[order].eraseIf([target](const std::function<void()> &hook) {
+                auto otherTarget = hook.target<void (*)()>();
+                return target == otherTarget;
+            });
+            onRendersMutex.unlock();
+        }
+
       private:
         static inline void initialize_()
         {
@@ -722,12 +752,6 @@ struct graphics final
             // handle frame buffer size
             glfwGetFramebufferSize(s_window, &s_frameBufferSize.x, &s_frameBufferSize.y);
             glViewport(0, 0, s_frameBufferSize.x, s_frameBufferSize.y);
-            glfwSetWindowSizeCallback(s_window, [](GLFWwindow *window, GLsizei width, GLsizei height) {
-                glViewport(0, 0, width, height);
-                s_windowSize.x = width;
-                s_windowSize.y = height;
-                tick_();
-            });
             glfwSetFramebufferSizeCallback(s_window, [](GLFWwindow *window, int width, int height) {
                 s_frameBufferSize.x = width;
                 s_frameBufferSize.y = height;
@@ -753,23 +777,25 @@ struct graphics final
 
             // execute a copy of onRenders
             onRendersMutex.lock();
-            auto onRendersCopy = onRenders;
+            onRenders.forEach([](const quickVector<std::function<void()>> &funcs) {
+                funcs.forEach([](const auto &func) {
+                    func();
+                });
+            });
             onRendersMutex.unlock();
-            for (auto &row : onRendersCopy)
-                for (auto &render : row)
-                    render();
             glfwSwapBuffers(s_window);
         }
     };
 
   private:
     static inline renderer s_renderer;
-    static inline glm::vec2 s_windowSize;
+
+    // size of the frame buffer in pixels
     static inline glm::ivec2 s_frameBufferSize;
+
     static inline GLFWwindow *s_window;
     static inline std::string s_name;
     static inline float s_dpi;
-    static inline glm::vec2 s_monitorSize;
 };
 
 } // namespace engine

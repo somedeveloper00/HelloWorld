@@ -1,6 +1,6 @@
 #pragma once
 
-#include "componentUtility.hpp"
+#include "common/componentUtils.hpp"
 #include "engine/app.hpp"
 #include "transform.hpp"
 
@@ -8,6 +8,8 @@ namespace engine
 {
 struct camera : public component
 {
+    createTypeInformation(camera, component);
+
     glm::mat4 viewMatrix{};
 
   private:
@@ -15,7 +17,7 @@ struct camera : public component
 
     static inline void initialize_()
     {
-        executeOnce();
+        ensureExecutesOnce();
     }
 
     void created_() override

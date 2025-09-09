@@ -4,6 +4,7 @@
 #include "engine/errorHandling.hpp"
 #include "template.hpp"
 #include <algorithm>
+#include <initializer_list>
 #include <tchar.h>
 #include <type_traits>
 
@@ -36,6 +37,16 @@ struct quickVector
         : _size(0), _capacity(initialCapacity)
     {
         _data = Alloc::allocate(_capacity);
+    }
+
+    // initialize vector with initial values
+    template <typename... TObjects>
+        requires std::conjunction_v<std::is_same<TObjects, T>...>
+    quickVector(bool, TObjects &&...initObjects)
+        : _capacity(sizeof...(TObjects)), _size(sizeof...(TObjects))
+    {
+        _data = Alloc::allocate(_capacity);
+        setVariadic_(0, std::forward<TObjects>(initObjects)...);
     }
 
     // copy reference (basic form | otherwise it won't compile)
@@ -419,6 +430,15 @@ struct quickVector
         }
     }
 
+    // finds all items of type
+    template <typename OtherT, typename OtherAlloc, bool OtherDebugMode>
+    const void findAllByType(quickVector<OtherT> &result) const
+    {
+        for (size_t i = 0; i < _size; i++)
+            if (OtherT *r = dynamic_cast<OtherT *>(_data[i]))
+                result.push_back(*r);
+    }
+
     // finds item by condition. returns nullptr if not found
     template <typename Func>
     T *findIf(Func &&func) const
@@ -485,6 +505,31 @@ struct quickVector
     size_t _size = 0, _capacity = 0;
     ConditionalVariable<bool, false, DebugChecks> _duringForEach;
 
+    template <typename First, typename... Rest>
+    void setVariadic_(const size_t index, First &&first, Rest &&...rest)
+    {
+        new (&_data[index]) T(std::forward<First>(first));
+        setVariadic_(index + 1, std::forward<Rest>(rest)...);
+    }
+    template <typename First>
+    void setVariadic_(const size_t index, First &&first)
+    {
+        new (&_data[index]) T(std::forward<First>(first));
+        // end of recursiveness
+    }
+
+    template <typename OtherT, float OtherIncrement, typename OtherAlloc, bool OtherDebugChecks>
+    static constexpr bool equals_(const quickVector *a, const quickVector<OtherT, OtherIncrement, OtherAlloc, OtherDebugChecks> *b)
+    {
+        return reinterpret_cast<const void *>(a) == reinterpret_cast<const void *>(b);
+    }
+
+    static inline void destructItem_(const T &item)
+    {
+        if constexpr (!std::is_trivially_destructible_v<T>)
+            item.~T();
+    }
+
     void realloc_(const size_t size)
     {
         auto *newData = Alloc::allocate(size);
@@ -510,18 +555,6 @@ struct quickVector
     size_t getIncrementedCapacity_()
     {
         return _capacity == 0 ? 1 : _capacity * Increment;
-    }
-
-    static inline void destructItem_(const T &item)
-    {
-        if constexpr (!std::is_trivially_destructible_v<T>)
-            item.~T();
-    }
-
-    template <typename OtherT, float OtherIncrement, typename OtherAlloc, bool OtherDebugChecks>
-    static constexpr bool equals_(const quickVector *a, const quickVector<OtherT, OtherIncrement, OtherAlloc, OtherDebugChecks> *b)
-    {
-        return reinterpret_cast<const void *>(a) == reinterpret_cast<const void *>(b);
     }
 };
 } // namespace engine
