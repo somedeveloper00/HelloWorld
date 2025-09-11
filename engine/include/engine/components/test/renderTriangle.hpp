@@ -199,11 +199,13 @@ struct renderTriangle : public component
         s_instances.push_back(getWeakRefAs<renderTriangle>());
         _startTime = time::getTotalTime();
         _transform = getEntity()->ensureComponentExists<transform>();
+        _transform->pushLock();
     }
 
     void removed_() override
     {
         s_instances.erase(getWeakRefAs<renderTriangle>());
+        _transform->popLock();
     }
 };
 } // namespace engine::test

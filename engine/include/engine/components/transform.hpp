@@ -54,7 +54,7 @@ struct transform : public component
             // update matrices
             for (size_t i = 0; i < entity::getRootEntitiesCount(); i++)
             {
-                glm::mat4 globalModelMatrix{0.1f};
+                glm::mat4 globalModelMatrix{1};
                 updateModelMatricesRecursively_(entity::getRootEntityAt(i), globalModelMatrix, false);
             }
         });

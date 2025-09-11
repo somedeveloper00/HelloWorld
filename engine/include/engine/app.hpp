@@ -30,10 +30,7 @@ struct component
     friend entity;
 
     // marks this component for removal. it will be removed after the current frame is finished (before the application::postComponentHooks)
-    void remove() noexcept
-    {
-        _state = static_cast<State>(_state | State::Removing);
-    }
+    void remove() noexcept;
 
     // get weak reference to the entity owning this component. it's valid as long as the component exists in the entity hierarchy
     weakRef<entity> &getEntity()
@@ -61,6 +58,19 @@ struct component
     bool getDisabled() const noexcept
     {
         return _state == State::Enabled;
+    }
+
+    // increases this component's lock (makes sure this component will not be removed).
+    // always call popLock() after this component is no longer needed by the consumer
+    void pushLock() noexcept
+    {
+        _removeLock++;
+    }
+
+    // decreases this component's lock (if reaches zero, this component will be removable)
+    void popLock() noexcept
+    {
+        _removeLock--;
     }
 
   protected:
@@ -91,6 +101,9 @@ struct component
     weakRef<entity> _entity;
     State _state = State::Enabled;
     weakRef<component> _selfRef{};
+
+    // lock for removing. if value is beyond 0, cannot remove this component
+    unsigned char _removeLock;
 
     bool awaitingRemoval_() const
     {
@@ -604,4 +617,18 @@ struct application
         }
     }
 };
+
+#ifndef _GAME_ENGINE_APP_H
+#define _GAME_ENGINE_APP_H
+inline void component::remove() noexcept
+{
+    if (_removeLock > 0)
+    {
+        log::logError("Cannot remove component \"{}\" from entity \"{}\", because other components depend on this.", getTypeName(), _entity->name);
+        return;
+    }
+    _state = static_cast<State>(_state | State::Removing);
+}
+
+#endif
 } // namespace engine

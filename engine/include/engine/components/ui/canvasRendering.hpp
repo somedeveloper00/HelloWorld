@@ -2,6 +2,7 @@
 
 #include "engine/app.hpp"
 #include "engine/components/transform.hpp"
+#include "glm/ext/matrix_transform.hpp"
 
 namespace engine::ui
 {
@@ -23,6 +24,9 @@ struct uiTransform : public transform
     // size in canvas unit scale. pivot is considered center. takes effect after anchor
     glm::vec2 deltaSize{0.f, 0.f};
 
+    // normalized point to determine the pivot of this uiTransform (central point)
+    glm::vec2 pivot{0.f, 0.f};
+
     void markDirty() noexcept override
     {
         transform::markDirty();
@@ -30,12 +34,6 @@ struct uiTransform : public transform
     }
 
   protected:
-    // position of the normalized rectangle in canvas space (bottom-left point of the rect)
-    glm::vec3 _canvasRectanglePosition;
-
-    // size of the normalized rectangle in canvas space
-    glm::vec3 _canvasRectangleSize;
-
     // used for optimization
     bool _uiTransformDirty = true;
 
@@ -54,16 +52,14 @@ struct uiTransform : public transform
         application::postComponentHooks.insert(1, []() {
             bench("update uiTransforms");
             entity::forEachRootEntity([](const weakRef<entity> &ent) {
-                glm::vec3 dummyVec3;
-                glm::mat4 dummyMat4;
-                updateCanvasRectRecursively_(dummyVec3, dummyMat4, *ent, dummyVec3, dummyVec3, false, false);
+                updateCanvasRectRecursively_({}, {1}, *ent, false, false);
             });
         });
         application::hooksMutex.unlock();
     }
 
     // update canvas space rectangles of this uiTransform component and all its children's
-    static inline void updateCanvasRectRecursively_(const glm::vec2 &canvasUnit, const glm::mat4 &canvasMatrix, entity &ent, const glm::vec3 &parentCanvasRectanglePosition, const glm::vec3 &parentCanvasRectangleSize, bool parentDirty, bool skipCanvas);
+    static inline void updateCanvasRectRecursively_(const glm::vec2 &canvasUnit, const glm::mat4 &parentGlobalMatrix, entity &ent, bool parentDirty, bool skipCanvas);
 };
 
 // renders UI
@@ -73,17 +69,10 @@ struct canvas : public component
 
     createTypeInformation(canvas, component);
 
-    void markDirty() noexcept
-    {
-        _dirty = true;
-    }
-
   protected:
     // scale unit for this canvas in canvas-space
     glm::vec2 _unit{1, 1};
-    weakRef<transform> _transform;
-
-    bool _dirty;
+    weakRef<uiTransform> _uiTransform;
 
     // returns first parent
     static inline weakRef<canvas> findClosestCanvas_(const entity *startingEntity)
@@ -93,26 +82,25 @@ struct canvas : public component
 
     void created_() override
     {
-        _transform = getEntity()->ensureComponentExists<transform>();
+        _uiTransform = getEntity()->ensureComponentExists<uiTransform>();
+        _uiTransform->pushLock();
+    }
+
+    void removed_() override
+    {
+        _uiTransform->popLock();
     }
 };
 
 #ifndef _CANVAS_RENDERING_H
 #define _CANVAS_RENDERING_H
 
-inline void uiTransform::updateCanvasRectRecursively_(const glm::vec2 &canvasUnit, const glm::mat4 &canvasMatrix, entity &ent, const glm::vec3 &parentCanvasRectanglePosition, const glm::vec3 &parentCanvasRectangleSize, bool parentDirty, bool skipCanvas)
+inline void uiTransform::updateCanvasRectRecursively_(const glm::vec2 &canvasUnit, const glm::mat4 &parentGlobalMatrix, entity &ent, bool parentDirty, bool skipCanvas)
 {
     canvas *canvasPtr;
     if (!skipCanvas && (canvasPtr = ent.getComponent<canvas>()))
     {
-        if (!canvasPtr->_transform)
-        {
-            canvasPtr->_transform = canvasPtr->getEntity()->addComponent<transform>();
-            log::logError("canvas \"{}\" did not have a transform component. Added one.", canvasPtr->getEntity()->name);
-        }
-        glm::vec3 pos{0, 0, 0}, scale{1, 1, 1};
-        uiTransform::updateCanvasRectRecursively_(canvasPtr->_unit, canvasPtr->_transform->getGlobalMatrix(), ent, pos, scale, canvasPtr->_dirty, true);
-        canvasPtr->_dirty = false;
+        uiTransform::updateCanvasRectRecursively_(canvasPtr->_unit, canvasPtr->_uiTransform->getGlobalMatrix(), ent, canvasPtr->_uiTransform->_uiTransformDirty, true);
         return;
     }
     if (uiTransform *ptr = ent.getComponent<uiTransform>())
@@ -120,29 +108,29 @@ inline void uiTransform::updateCanvasRectRecursively_(const glm::vec2 &canvasUni
         uiTransform &ref = *ptr;
         if (ref._uiTransformDirty || parentDirty)
         {
-            // update canvas-space rect
-            ref._canvasRectanglePosition = parentCanvasRectanglePosition +
-                                           glm::vec3(ref.minAnchor, 0) * parentCanvasRectangleSize +             // anchor size
-                                           glm::vec3(ref.deltaSize / 2.f * canvasUnit, 0) +                      // delta size
-                                           ref.position * glm::vec3(canvasUnit, 1);                              // position delta
-            ref._canvasRectangleSize = parentCanvasRectangleSize * glm::vec3(ref.maxAnchor - ref.minAnchor, 0) + // anchor size
-                                       glm::vec3(ref.deltaSize / 2.f * canvasUnit, 0) *                          // delta size
-                                           ref.scale;                                                            // scale
+            // update local
+            const glm::vec3 scale = ref.scale *                                     // scale
+                                    glm::vec3((ref.maxAnchor - ref.minAnchor) +     // anchor size
+                                                  ref.deltaSize / 2.f * canvasUnit, // delta size
+                                              1);
+            const glm::vec3 position = glm::vec3((ref.minAnchor + ref.maxAnchor) - 1.f - ref.pivot, 0) + // anchor size and pivot
+                                       ref.position * glm::vec3(canvasUnit, 1);                          // position delta
+            const glm::quat rotation = ref.rotation;                                                     // no conversion
             // update matrix
-            ref._modelMatrix = glm::translate(glm::mat4(1), ref._canvasRectanglePosition) * // position
-                               glm::mat4_cast(ref.rotation) *                               // rotation
-                               glm::scale(glm::mat4(1), ref._canvasRectangleSize);          // scale
-            ref._modelGlobalMatrix = canvasMatrix * ref._modelMatrix;
+            ref._modelMatrix = glm::translate(glm::mat4(1), position) * // position
+                               glm::mat4_cast(ref.rotation) *           // rotation
+                               glm::scale(glm::mat4(1), scale);         // scale
+            ref._modelGlobalMatrix = parentGlobalMatrix * ref._modelMatrix;
             ref._uiTransformDirty = false;
             parentDirty = true;
         }
         ent.forEachChild([&](const weakRef<entity> &child) {
-            updateCanvasRectRecursively_(canvasUnit, canvasMatrix, *child, ref._canvasRectanglePosition, ref._canvasRectangleSize, parentDirty, false);
+            updateCanvasRectRecursively_(canvasUnit, ref._modelGlobalMatrix, *child, parentDirty, false);
         });
         return;
     }
     ent.forEachChild([&](const weakRef<entity> &child) {
-        updateCanvasRectRecursively_(canvasUnit, canvasMatrix, *child, parentCanvasRectanglePosition, parentCanvasRectangleSize, parentDirty, false);
+        updateCanvasRectRecursively_(canvasUnit, parentGlobalMatrix, *child, parentDirty, false);
     });
 }
 

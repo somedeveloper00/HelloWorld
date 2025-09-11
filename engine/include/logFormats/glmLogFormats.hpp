@@ -18,8 +18,11 @@ struct formatter<glm::mat4>
     {
         const auto *ptr = glm::value_ptr(c);
         return std::format_to(
-            ctx.out(), "[[{}, {}, {}, {}] [{}, {}, {}, {}] [{}, {}, {}, {}] [{}, {}, {}, {}]]",
-            ptr[0], ptr[1], ptr[2], ptr[3], ptr[4], ptr[5], ptr[6], ptr[7], ptr[8], ptr[9], ptr[10], ptr[11], ptr[12], ptr[13], ptr[14], ptr[15]);
+            ctx.out(), "[row0: [{}, {}, {}, {}] row1: [{}, {}, {}, {}] row2: [{}, {}, {}, {}] row3: [{}, {}, {}, {}]]",
+            ptr[4 * 0], ptr[4 * 1], ptr[4 * 2], ptr[4 * 3],                  // row 0
+            ptr[4 * 0 + 1], ptr[4 * 1 + 1], ptr[4 * 2 + 1], ptr[4 * 3 + 1],  // row 1
+            ptr[4 * 0 + 2], ptr[4 * 1 + 2], ptr[4 * 2 + 2], ptr[4 * 3 + 2],  // row 2
+            ptr[4 * 0 + 3], ptr[4 * 1 + 3], ptr[4 * 2 + 3], ptr[4 * 3 + 3]); // row 3
     }
 };
 template <>

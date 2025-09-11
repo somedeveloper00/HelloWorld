@@ -639,6 +639,27 @@ struct graphics final
         opengl() = delete;
         friend graphics;
 
+        // disables opengl depth test during the lifetime of this object, and restores previous state afterwards
+        struct noDepthTestContext
+        {
+            noDepthTestContext()
+                : _enabled(glIsEnabled(GL_DEPTH_TEST))
+            {
+                glDisable(GL_DEPTH_TEST);
+            }
+
+            ~noDepthTestContext()
+            {
+                if (_enabled)
+                    glEnable(GL_DEPTH_TEST);
+                else
+                    glDisable(GL_DEPTH_TEST);
+            }
+
+          private:
+            const bool _enabled;
+        };
+
         // best not to use it directly. see addRendererHook and removeRendererHook.
         // executes when rendering a frame. if you subscribe, you should also unsubscribe later.
         // order of execution is from 0 to last.
@@ -748,6 +769,8 @@ struct graphics final
         {
             fatalAssert(gladLoadGL((GLADloadfunc)glfwGetProcAddress) != 0, "gladLoadGL failed");
             glEnable(GL_DEPTH_TEST);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glEnable(GL_BLEND);
 
             // handle frame buffer size
             glfwGetFramebufferSize(s_window, &s_frameBufferSize.x, &s_frameBufferSize.y);
