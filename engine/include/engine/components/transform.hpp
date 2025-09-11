@@ -7,9 +7,12 @@
 
 namespace engine
 {
+// 3D transform. children of this component must also calculate their own matrices
 struct transform : public component
 {
     createTypeInformation(transform, component);
+
+    transform() = default;
 
     glm::vec3 position{};
     glm::vec3 scale{1.f, 1.f, 1.f};
@@ -40,10 +43,23 @@ struct transform : public component
         _dirty = true;
     }
 
+    const bool isDirty() const noexcept
+    {
+        return _dirty;
+    }
+
   protected:
     glm::mat4 _modelMatrix;
     glm::mat4 _modelGlobalMatrix;
     bool _dirty = true;
+
+    // set this to false to override matrix multiplication
+    const bool _overrideMatrixCalculation = false;
+
+    transform(bool overrideMatrixCalculation)
+        : _overrideMatrixCalculation(overrideMatrixCalculation)
+    {
+    }
 
     static inline void initialize_()
     {
@@ -63,7 +79,8 @@ struct transform : public component
 
     static inline void updateModelMatricesRecursively_(entity *ent, glm::mat4 &parentModelGlobalMatrix, bool parentDirty)
     {
-        if (transform *ptr = ent->getComponent<transform>())
+        transform *ptr;
+        if ((ptr = ent->getComponent<transform>()) && !ptr->_overrideMatrixCalculation)
         {
             transform &transformRef = *ptr;
             if (transformRef._dirty)

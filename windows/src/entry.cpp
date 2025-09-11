@@ -18,12 +18,12 @@ int main()
 
     auto canvasEntity = engine::entity::create("main canvas");
     canvasEntity->addComponent<engine::ui::canvas>();
-    // canvasEntity->addComponent<animateTransform>()->rotationValue = -0.5f;
-    // canvasEntity->getComponent<animateTransform>()->rotationAxis = {0, 1, 0};
+    canvasEntity->addComponent<animateTransform>()->rotationValue = -0.5f;
+    canvasEntity->getComponent<animateTransform>()->rotationAxis = {0, 1, 0};
 
     auto imageEntity = engine::entity::create("image");
     imageEntity->setParent(canvasEntity);
-    imageEntity->addComponent<engine::ui::uiImage>()->color = {1, 0, 0, 0.5f};
+    imageEntity->addComponent<engine::ui::uiImage>()->color = {1, 0, 0, 1.f};
 
     auto imageEntity2 = engine::entity::create("image-inner");
     imageEntity2->setParent(imageEntity);
@@ -31,7 +31,7 @@ int main()
     imageEntity2->addComponent<engine::ui::uiImage>()->color = {0, 0, 0, 1};
     {
         auto ref = imageEntity2->getComponent<engine::ui::uiTransform>();
-        ref->maxAnchor.y = 0.5f;
+        ref->deltaSize = {-100.f, -100.f};
         ref->position.z -= 0.1f;
     }
 

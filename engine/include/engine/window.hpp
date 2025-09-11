@@ -583,6 +583,9 @@ struct graphics final
 
     static inline color clearColor{1.f, 1.f, 0.f, 1.f};
 
+    // gets called when the framebuffer size is changed. cannot modify when iterating
+    static inline quickVector<std::function<void()>> frameBufferSizeChanged;
+
     static inline void initialize(std::string name, const glm::vec2 center, const glm::vec2 size, bool useMica, bool useAcrylic, renderer renderer)
     {
         static bool _initialized = false;
@@ -628,8 +631,8 @@ struct graphics final
         return s_renderer;
     }
 
-    // get window size in pixels
-    static inline glm::ivec2 getSize() noexcept
+    // get frame buffer size
+    static inline glm::ivec2 getFrameBufferSize() noexcept
     {
         return s_frameBufferSize;
     }
@@ -639,7 +642,7 @@ struct graphics final
         opengl() = delete;
         friend graphics;
 
-        // disables opengl depth test during the lifetime of this object, and restores previous state afterwards
+        // disables opengl depth test during the lifetime of this object (RAII), and restores previous state afterwards
         struct noDepthTestContext
         {
             noDepthTestContext()
@@ -775,21 +778,21 @@ struct graphics final
             // handle frame buffer size
             glfwGetFramebufferSize(s_window, &s_frameBufferSize.x, &s_frameBufferSize.y);
             glViewport(0, 0, s_frameBufferSize.x, s_frameBufferSize.y);
-            glfwSetFramebufferSizeCallback(s_window, [](GLFWwindow *window, int width, int height) {
+            glfwSetFramebufferSizeCallback(s_window, [](GLFWwindow *window, const int width, const int height) {
+                glViewport(0, 0, width, height);
                 s_frameBufferSize.x = width;
                 s_frameBufferSize.y = height;
-                if (s_renderer == renderer::opengl)
-                    opengl::updateFrameBufferSize_(glm::vec2{width, height});
+                frameBufferSizeChanged.forEach([](const auto &func) { func(); });
+            });
+            glfwSetWindowSizeCallback(s_window, [](GLFWwindow *window, const int width, const int height) {
+                // draw during resizing
+                glViewport(0, 0, width, height);
+                tick_();
             });
 
             application::hooksMutex.lock();
             application::postComponentHooks.push_back(tick_);
             application::hooksMutex.unlock();
-        }
-
-        static inline void updateFrameBufferSize_(glm::ivec2 size)
-        {
-            glViewport(0, 0, size.x, size.y);
         }
 
         static inline void tick_()
@@ -801,9 +804,7 @@ struct graphics final
             // execute a copy of onRenders
             onRendersMutex.lock();
             onRenders.forEach([](const quickVector<std::function<void()>> &funcs) {
-                funcs.forEach([](const auto &func) {
-                    func();
-                });
+                funcs.forEach([](const auto &func) { func(); });
             });
             onRendersMutex.unlock();
             glfwSwapBuffers(s_window);

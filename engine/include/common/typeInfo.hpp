@@ -27,6 +27,10 @@
     {                                                                                                          \
         const static std::string s_typeName = typeid(type).name();                                             \
         return s_typeName;                                                                                     \
+    }                                                                                                          \
+    const size_t &getTypeHash() const noexcept override                                                        \
+    {                                                                                                          \
+        return c_typeHash;                                                                                     \
     }
 
 #define createBaseTypeInformation(type)                                                                        \
@@ -48,6 +52,10 @@
     {                                                                                                          \
         const static std::string s_typeName = typeid(type).name();                                             \
         return s_typeName;                                                                                     \
+    }                                                                                                          \
+    virtual const size_t &getTypeHash() const noexcept                                                         \
+    {                                                                                                          \
+        return c_typeHash;                                                                                     \
     }
 
 // returns whether or not the object is of type TargetType
