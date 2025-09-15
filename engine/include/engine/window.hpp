@@ -51,6 +51,7 @@ struct input final
 
         gamePadA, gamePadB, gamePadX, gamePadY, gamePadRightShoulder, gamePadLeftShoulder, gamePadLeftTrigger, gamePadRightTrigger, gamePadDpadUp, gamePadDpadDown, gamePadDpadLeft, gamePadDpadRight, gamePadMenu, gamePadView, gamePadLeftThumbstickUp, gamePadLeftThumbstickDown, gamePadLeftThumbstickRight, gamePadLeftThumbstickLeft, gamePadRightThumbstickUp, gamePadRightThumbstickDown, gamePadRightThumbstickRight, gamePadRightThumbstickLeft, 
 
+        mouseLeft, mouseRight, mouseMiddle,
         count
     };
     // clang-format on
@@ -85,8 +86,14 @@ struct input final
         return getKeyState(key) == state::up;
     }
 
+    static inline glm::ivec2 getMousePosition() noexcept
+    {
+        return s_mousePos;
+    }
+
   private:
     static inline state s_states[static_cast<size_t>(key::count)];
+    static inline glm::ivec2 s_mousePos;
 
     static inline void initialize_(GLFWwindow *window)
     {
@@ -113,8 +120,27 @@ struct input final
                 s_upKeys.push_back(key);
             }
         });
+        glfwSetMouseButtonCallback(window, [](GLFWwindow *window, int button, int action, int mods) {
+            const auto key = static_cast<size_t>(glfwMouseKeyToEngineKey_(button));
+            if (key <= static_cast<size_t>(key::unknown) || key >= static_cast<size_t>(key::count))
+                return;
+
+            // mark for update in the next tick
+            if (action == GLFW_PRESS)
+                s_downKeys.push_back(key);
+            else if (action == GLFW_REPEAT)
+            {
+                s_downKeys.erase(std::remove(s_downKeys.begin(), s_downKeys.end(), key), s_downKeys.end());
+                s_repeatKeys.push_back(key);
+            }
+            else
+            {
+                s_downKeys.erase(std::remove(s_downKeys.begin(), s_downKeys.end(), key), s_downKeys.end());
+                s_upKeys.push_back(key);
+            }
+        });
         application::hooksMutex.lock();
-        application::preComponentHooks.push_back([]() {
+        application::preComponentHooks.push_back([window]() {
             for (auto key : s_downKeys)
                 if (s_states[key] == state::up)
                     s_states[key] = state::justDown;
@@ -126,6 +152,10 @@ struct input final
             for (auto key : s_upKeys)
                 s_states[key] = state::up;
             s_upKeys.clear();
+
+            static double x, y;
+            glfwGetCursorPos(window, &x, &y);
+            updateCursorPos(x, y);
         });
         application::hooksMutex.unlock();
     }
@@ -559,6 +589,38 @@ struct input final
             return key::unknown;
         }
     }
+
+    static inline int engineKeyToGlfwMouseKey_(const key key)
+    {
+        switch (key)
+        {
+        case key::mouseLeft:
+            return GLFW_MOUSE_BUTTON_LEFT;
+        case key::mouseRight:
+            return GLFW_MOUSE_BUTTON_RIGHT;
+        case key::mouseMiddle:
+            return GLFW_MOUSE_BUTTON_MIDDLE;
+        default:
+            return 0;
+        }
+    }
+
+    static inline key glfwMouseKeyToEngineKey_(const int glfwKey)
+    {
+        switch (glfwKey)
+        {
+        case GLFW_MOUSE_BUTTON_LEFT:
+            return key::mouseLeft;
+        case GLFW_MOUSE_BUTTON_RIGHT:
+            return key::mouseRight;
+        case GLFW_MOUSE_BUTTON_MIDDLE:
+            return key::mouseMiddle;
+        default:
+            return key::unknown;
+        }
+    }
+
+    static inline void updateCursorPos(const double x, const double y);
 };
 
 inline input::state operator|(input::state a, input::state b) noexcept
@@ -574,6 +636,8 @@ inline input::state operator&(input::state a, input::state b) noexcept
 
 struct graphics final
 {
+    friend input;
+
     enum renderer : uint8_t
     {
         opengl
@@ -595,7 +659,7 @@ struct graphics final
         s_renderer = renderer;
 
 // create window
-#ifndef NDEBUG
+#ifdef DEBUG
         glfwSetErrorCallback([](int error, const char *description) {
             log::logError("(GLFW error code {}) \"{}\"", error, std::string(description));
         });
@@ -603,6 +667,9 @@ struct graphics final
         fatalAssert(glfwInit() == GLFW_TRUE, "glfwInit() failed");
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+#if DEBUG
+        glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
+#endif
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         s_window = glfwCreateWindow(size.x, size.y, name.c_str(), NULL, NULL);
         fatalAssert(s_window != nullptr, "glfwCreateWindow failed");
@@ -642,7 +709,53 @@ struct graphics final
         opengl() = delete;
         friend graphics;
 
+        // enables opengl debug mode during the lifetime of this object (RAII), and restores previous state afterwards
+        // by default, debug mode is turned off
+        struct debugModeContext
+        {
+            debugModeContext()
+                : _enabled(glIsEnabled(GL_DEBUG_OUTPUT))
+            {
+                glEnable(GL_DEBUG_OUTPUT);
+                glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+                glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam) {
+                    if (severity == GL_DEBUG_SEVERITY_HIGH)
+                    {
+                        log::logError(
+                            "[OPENGL DEBUG ERROR] id: {} type:{} severity:{} message:\"{}\"",
+                            id,
+                            type == GL_DEBUG_TYPE_ERROR ? "TYPE ERROR" : std::to_string(type),
+                            "high", message);
+                    }
+                    else
+                    {
+                        log::logWarning(
+                            "[OPENGL DEBUG ERROR] id: {} type:{} severity:{} message:\"{}\"",
+                            id,
+                            type == GL_DEBUG_TYPE_ERROR ? "TYPE ERROR" : std::to_string(type),
+                            severity == GL_DEBUG_SEVERITY_MEDIUM ? "medium" : severity == GL_DEBUG_SEVERITY_LOW ? "low"
+                                                                                                                : "notification",
+                            message);
+                    }
+                },
+                                       0);
+            }
+
+            ~debugModeContext()
+            {
+                if (_enabled)
+                    glEnable(GL_DEBUG_OUTPUT);
+                else
+                    glDisable(GL_DEBUG_OUTPUT);
+                glDebugMessageCallback(nullptr, 0);
+            }
+
+          private:
+            const bool _enabled;
+        };
+
         // disables opengl depth test during the lifetime of this object (RAII), and restores previous state afterwards
+        // by default, depth test is turned on
         struct noDepthTestContext
         {
             noDepthTestContext()
@@ -657,6 +770,28 @@ struct graphics final
                     glEnable(GL_DEPTH_TEST);
                 else
                     glDisable(GL_DEPTH_TEST);
+            }
+
+          private:
+            const bool _enabled;
+        };
+
+        // disables opengl blending during the lifetime of this object (RAII), and restores previous state afterwards
+        // by default, blend is turned on
+        struct noBlendContext
+        {
+            noBlendContext()
+                : _enabled(glIsEnabled(GL_BLEND))
+            {
+                glDisable(GL_BLEND);
+            }
+
+            ~noBlendContext()
+            {
+                if (_enabled)
+                    glEnable(GL_BLEND);
+                else
+                    glDisable(GL_BLEND);
             }
 
           private:
@@ -772,6 +907,8 @@ struct graphics final
         {
             fatalAssert(gladLoadGL((GLADloadfunc)glfwGetProcAddress) != 0, "gladLoadGL failed");
             glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glEnable(GL_BLEND);
 
@@ -822,4 +959,16 @@ struct graphics final
     static inline float s_dpi;
 };
 
+#ifndef GAMEENGINE_WINDOWS_H
+#define GAMEENGINE_WINDOWS_H
+inline void input::updateCursorPos(const double x, const double y)
+{
+    if (x >= 0 && x < graphics::s_frameBufferSize.x &&
+        y >= 0 && y < graphics::s_frameBufferSize.y)
+    {
+        input::s_mousePos.x = x;
+        input::s_mousePos.y = y;
+    }
+}
+#endif
 } // namespace engine

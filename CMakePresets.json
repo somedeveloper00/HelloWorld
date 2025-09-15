@@ -30,7 +30,7 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_CXX_FLAGS_RELEASE": "/fp:fast /DDEBUG /DTRACY_ENABLE"
+                "CMAKE_CXX_FLAGS_DEBUG": "/fp:fast /DDEBUG /DTRACY_ENABLE"
             }
         },
         {
@@ -65,11 +65,13 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_CXX_FLAGS_RELEASE": "/fp:fast /DDEBUG /DTRACY_ENABLE"
+                "CMAKE_CXX_FLAGS_DEBUG": "/fp:fast /DDEBUG /DTRACY_ENABLE"
             }
         },
         {
             "name": "x86-deploy",
+            "displayName": "x86 Deploy",
+            "inherits": "x86-eploy",
             "displayName": "x86 Deploy",
             "inherits": "x86-debug",
             "cacheVariables": {

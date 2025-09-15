@@ -103,23 +103,7 @@ struct transform : public component
     void created_() override
     {
         initialize_();
-        if (checkForDuplicateTransforms_())
-            remove();
-    }
-
-    // checks if this component's entity has one transform component or not
-    bool checkForDuplicateTransforms_()
-    {
-        static quickVector<weakRef<transform>> buff;
-        getEntity()->getComponents<transform>(buff);
-        if (buff.size() > 1)
-        {
-            buff.clear();
-            log::logWarning("Entity \"{}\" has more than one \"{}\" components, which is not allowed.", getEntity()->name, getTypeName());
-            return true;
-        }
-        buff.clear();
-        return false;
+        disallowMultipleComponents(transform);
     }
 };
 } // namespace engine

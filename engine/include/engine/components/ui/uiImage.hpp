@@ -11,8 +11,8 @@ namespace engine::ui
 // drawa simple 2D image on the UI
 struct uiImage : public component
 {
-    color color{1, 1, 1, 1};
     createTypeInformation(uiImage, component);
+    color color{1, 1, 1, 1};
 
   protected:
     static inline quickVector<uiImage *> s_instances;

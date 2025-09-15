@@ -67,4 +67,18 @@ struct formatter<glm::vec2>
         return std::format_to(ctx.out(), "[{}, {}]", c.x, c.y);
     }
 };
+template <>
+struct formatter<glm::ivec2>
+{
+    constexpr auto parse(std::format_parse_context &ctx)
+    {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const glm::ivec2 &c, FormatContext &ctx) const
+    {
+        return std::format_to(ctx.out(), "[{}, {}]", c.x, c.y);
+    }
+};
 } // namespace std

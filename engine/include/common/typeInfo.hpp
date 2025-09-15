@@ -4,8 +4,22 @@
 
 // used for macros
 #include "constexprUtils.hpp"
+#include "engine/quickVector.hpp"
+#include "engine/ref.hpp"
 #include <array>
 #include <span>
+
+// disallows multiple components of this type in one entity
+#define disallowMultipleComponents(type)                                                                                                      \
+    static engine::quickVector<engine::weakRef<type>> s_buffer##type;                                                                         \
+    getEntity()->getComponents(s_buffer##type);                                                                                               \
+    if (s_buffer##type.size() > 1)                                                                                                            \
+    {                                                                                                                                         \
+        log::logWarning("Entity \"{}\" has more than one \"" #type "\" components, which is not allowed.", getEntity()->name, getTypeName()); \
+        remove();                                                                                                                             \
+        return;                                                                                                                               \
+    }                                                                                                                                         \
+    s_buffer##type.clear();
 
 // use in components to create type information. This will be used for fast reflection-like purposes
 #define createTypeInformation(type, base)                                                                      \

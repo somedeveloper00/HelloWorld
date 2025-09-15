@@ -6,6 +6,7 @@
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
 #include "engine/window.hpp"
+#include "pointerDebug.hpp"
 
 int main()
 {
@@ -43,6 +44,7 @@ int main()
         ref->minAnchor.x = 0.5f;
         ref->position.z -= 0.2f;
     }
+    imageEntity3->addComponent<pointerDebug>();
 
     engine::application::preComponentHooks.push_back([&]() {
         // imageEntity3->getComponent<engine::ui::uiTransform>()->maxAnchor.x = pow(sin(engine::time::getTotalTime()), 2);

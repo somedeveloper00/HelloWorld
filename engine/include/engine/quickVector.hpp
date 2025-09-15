@@ -293,11 +293,11 @@ struct quickVector
     void forEach(Func &&func) const
     {
         if constexpr (DebugChecks)
-            _duringForEach.value = true;
+            const_cast<quickVector*>(this)->_duringForEach.value = true;
         for (size_t i = 0; i < _size; ++i)
             func(static_cast<const T &>(_data[i]));
         if constexpr (DebugChecks)
-            _duringForEach.value = false;
+            const_cast<quickVector*>(this)->_duringForEach.value = false;
     }
 
     template <typename Func>
@@ -362,12 +362,12 @@ struct quickVector
     void forEachIndexedParallel(Func &&func) const
     {
         if constexpr (DebugChecks)
-            _duringForEach.value = true;
+            const_cast<quickVector*>(this)->_duringForEach.value = true;
 #pragma omp parallel for
         for (signed long long i = 0; i < _size; ++i)
             func(i, static_cast<const T &>(_data[i]));
         if constexpr (DebugChecks)
-            _duringForEach.value = false;
+            const_cast<quickVector*>(this)->_duringForEach.value = false;
     }
 
     void erase(const T &item)
