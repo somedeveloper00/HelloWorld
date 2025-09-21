@@ -66,35 +66,9 @@ struct uiImage : public component
             static GLint modelMatrixLocation = glGetUniformLocation(program, "modelMatrix");
             static GLint colorLocation = glGetUniformLocation(program, "color");
 
-            static const float vertices[] = {
-                1, 1,
-                1, -1,
-                -1, -1,
-                -1, 1};
-            static const GLuint indices[] = {
-                0, 1, 2,
-                2, 3, 0};
-            static GLuint vao;
-            GLuint vbo, ebo;
-            glGenVertexArrays(1, &vao);
-            glGenBuffers(1, &vbo);
-            glGenBuffers(1, &ebo);
-
-            glBindVertexArray(vao);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-            // position
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, 0);
-
-            glBindVertexArray(0);
-
             graphics::opengl::addRendererHook(1, []() {
                 bench("rendering uiImage");
-                glBindVertexArray(vao);
+                glBindVertexArray(graphics::opengl::getSquareVao());
                 glUseProgram(program);
                 s_instances.forEach([](const uiImage *instance) {
                     const auto &matrix = instance->_uiTransform->getGlobalMatrix();

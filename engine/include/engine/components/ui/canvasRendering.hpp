@@ -55,10 +55,18 @@ struct uiTransform : public transform
     static inline void initialize_()
     {
         ensureExecutesOnce();
-        graphics::opengl::addRendererHook(1, []() {
+        application::hooksMutex.lock();
+        application::postComponentHooks.push_back([]() {
             bench("update uiTransforms");
             entity::forEachRootEntity([](const weakRef<entity> &ent) {
                 updateMatricesRecursively_({}, {1}, *ent, false, false);
+            });
+        });
+        application::hooksMutex.unlock();
+        graphics::frameBufferSizeChanged.push_back([]() {
+            bench("update uiTransforms");
+            entity::forEachRootEntity([](const weakRef<entity> &ent) {
+                updateMatricesRecursively_({}, {1}, *ent, true, false);
             });
         });
     }
@@ -146,7 +154,7 @@ inline void uiTransform::updateMatricesRecursively_(const glm::vec2 &canvasUnit,
     canvas *canvasPtr;
     if (!skipCanvas && (canvasPtr = ent.getComponent<canvas>()))
     {
-        uiTransform::updateMatricesRecursively_(canvasPtr->_unit, canvasPtr->_transform->getGlobalMatrix(), ent, canvasPtr->_dirty, true);
+        uiTransform::updateMatricesRecursively_(canvasPtr->_unit, canvasPtr->_transform->getGlobalMatrix(), ent, canvasPtr->_dirty | parentDirty, true);
         return;
     }
     if (uiTransform *ptr = ent.getComponent<uiTransform>())
@@ -160,7 +168,7 @@ inline void uiTransform::updateMatricesRecursively_(const glm::vec2 &canvasUnit,
                                                   ref.deltaSize * canvasUnit,   // delta size
                                               1);
             const glm::vec3 position = glm::vec3((ref.minAnchor + ref.maxAnchor) - 1.f - ref.pivot, 0) + // anchor size and pivot
-                                       ref.position * glm::vec3(canvasUnit, 1);                          // position delta
+                                       ref.position * glm::vec3(canvasUnit * 2.f, 1);                          // position delta
             const glm::quat rotation = ref.rotation;                                                     // no conversion
             // update matrix
             ref._modelMatrix = glm::translate(glm::mat4(1), position) * // position

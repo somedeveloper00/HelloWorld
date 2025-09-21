@@ -10,7 +10,9 @@
 #include "data.hpp"
 #include "engine/benchmark.hpp"
 #include "engine/quickVector.hpp"
+#include "engine/window.hpp"
 #include "errorHandling.hpp"
+#include "glm/fwd.hpp"
 #include "log.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -86,14 +88,25 @@ struct input final
         return getKeyState(key) == state::up;
     }
 
+    // 0,0 is top-left. max,max is bottom-right
     static inline glm::ivec2 getMousePosition() noexcept
     {
         return s_mousePos;
     }
 
+    // returns whether mouse is within this window
+    static inline bool isMouseInWindow() noexcept
+    {
+        return s_mouseInWindow;
+    }
+
+    // 0,0 is center. max,max is top-right
+    static inline glm::ivec2 getMousePositionCentered() noexcept;
+
   private:
     static inline state s_states[static_cast<size_t>(key::count)];
     static inline glm::ivec2 s_mousePos;
+    static inline bool s_mouseInWindow = false;
 
     static inline void initialize_(GLFWwindow *window)
     {
@@ -711,6 +724,7 @@ struct graphics final
 
         // enables opengl debug mode during the lifetime of this object (RAII), and restores previous state afterwards
         // by default, debug mode is turned off
+        // uses glDebugMessageCallback
         struct debugModeContext
         {
             debugModeContext()
@@ -718,27 +732,31 @@ struct graphics final
             {
                 glEnable(GL_DEBUG_OUTPUT);
                 glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-                glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam) {
-                    if (severity == GL_DEBUG_SEVERITY_HIGH)
-                    {
-                        log::logError(
-                            "[OPENGL DEBUG ERROR] id: {} type:{} severity:{} message:\"{}\"",
-                            id,
-                            type == GL_DEBUG_TYPE_ERROR ? "TYPE ERROR" : std::to_string(type),
-                            "high", message);
-                    }
-                    else
-                    {
-                        log::logWarning(
-                            "[OPENGL DEBUG ERROR] id: {} type:{} severity:{} message:\"{}\"",
-                            id,
-                            type == GL_DEBUG_TYPE_ERROR ? "TYPE ERROR" : std::to_string(type),
-                            severity == GL_DEBUG_SEVERITY_MEDIUM ? "medium" : severity == GL_DEBUG_SEVERITY_LOW ? "low"
-                                                                                                                : "notification",
-                            message);
-                    }
-                },
-                                       0);
+                if (s_count++ == 0)
+                    glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam) {
+                        if (severity == GL_DEBUG_SEVERITY_HIGH)
+                        {
+                            log::logError(
+                                "[OPENGL DEBUG ERROR] id: {} type:{} severity:{} message:\"{}\"",
+                                id,
+                                type == GL_DEBUG_TYPE_ERROR ? "TYPE ERROR" : std::to_string(type),
+                                "high", message);
+#ifdef DEBUG
+                            assert(false);
+#endif
+                        }
+                        else
+                        {
+                            log::logWarning(
+                                "[OPENGL DEBUG ERROR] id: {} type:{} severity:{} message:\"{}\"",
+                                id,
+                                type == GL_DEBUG_TYPE_ERROR ? "TYPE ERROR" : std::to_string(type),
+                                severity == GL_DEBUG_SEVERITY_MEDIUM ? "medium" : severity == GL_DEBUG_SEVERITY_LOW ? "low"
+                                                                                                                    : "notification",
+                                message);
+                        }
+                    },
+                                           0);
             }
 
             ~debugModeContext()
@@ -747,10 +765,12 @@ struct graphics final
                     glEnable(GL_DEBUG_OUTPUT);
                 else
                     glDisable(GL_DEBUG_OUTPUT);
-                glDebugMessageCallback(nullptr, 0);
+                if (--s_count == 0)
+                    glDebugMessageCallback(nullptr, 0);
             }
 
           private:
+            static inline unsigned short s_count = 0;
             const bool _enabled;
         };
 
@@ -902,6 +922,40 @@ struct graphics final
             onRendersMutex.unlock();
         }
 
+        // returns the vao for a square from -1 to 1 across x/y (no z axis). it has 2 triangles
+        static inline GLuint getSquareVao()
+        {
+            static GLuint s_vao = 0;
+            if (s_vao == 0)
+            {
+                static const float vertices[] = {
+                    1, 1,
+                    1, -1,
+                    -1, -1,
+                    -1, 1};
+                static const GLuint indices[] = {
+                    0, 1, 2,
+                    2, 3, 0};
+                GLuint vbo, ebo;
+                glGenVertexArrays(1, &s_vao);
+                glGenBuffers(1, &vbo);
+                glGenBuffers(1, &ebo);
+
+                glBindVertexArray(s_vao);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+                // position
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, 0);
+
+                glBindVertexArray(0);
+            }
+            return s_vao;
+        }
+
       private:
         static inline void initialize_()
         {
@@ -920,10 +974,6 @@ struct graphics final
                 s_frameBufferSize.x = width;
                 s_frameBufferSize.y = height;
                 frameBufferSizeChanged.forEach([](const auto &func) { func(); });
-            });
-            glfwSetWindowSizeCallback(s_window, [](GLFWwindow *window, const int width, const int height) {
-                // draw during resizing
-                glViewport(0, 0, width, height);
                 tick_();
             });
 
@@ -968,7 +1018,15 @@ inline void input::updateCursorPos(const double x, const double y)
     {
         input::s_mousePos.x = x;
         input::s_mousePos.y = y;
+        input::s_mouseInWindow = true;
     }
+    else
+        input::s_mouseInWindow = false;
+}
+
+inline glm::ivec2 input::getMousePositionCentered() noexcept
+{
+    return {s_mousePos.x - graphics::getFrameBufferSize().x / 2, -s_mousePos.y + graphics::getFrameBufferSize().y / 2};
 }
 #endif
 } // namespace engine

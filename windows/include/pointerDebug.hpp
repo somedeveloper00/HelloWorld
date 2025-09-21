@@ -1,31 +1,50 @@
 #pragma once
 
 #include "common/typeInfo.hpp"
+#include "engine/components/ui/uiImage.hpp"
 #include "engine/components/ui/uiSelectable.hpp"
 #include "engine/log.hpp"
+#include "engine/window.hpp"
+#include <gl/gl.h>
 
 struct pointerDebug : public engine::ui::uiSelectable
 {
     createTypeInformation(pointerDebug, engine::ui::uiSelectable);
 
   protected:
+    void created_() override
+    {
+        getEntity()->ensureComponentExists<engine::ui::uiImage>()->pushLock();
+        engine::ui::uiSelectable::created_();
+        _pointerRead->setVertices(engine::graphics::opengl::getSquareVao(), 6);
+    }
+
+    void removed_() override
+    {
+        getEntity()->getComponent<engine::ui::uiImage>()->popLock();
+    }
+
     void onPointerEnter() override
     {
-        engine::log::logInfo("onPointerEnter");
+        getEntity()->getComponent<engine::ui::uiImage>()->color = {1, 0, 0, 1};
+        engine::log::logInfo("\"{}\" onPointerEnter", getEntity()->name);
     }
 
     void onPointerExit() override
     {
-        engine::log::logInfo("onPointerExit");
+        getEntity()->getComponent<engine::ui::uiImage>()->color = {0, 0, 0, 1};
+        engine::log::logInfo("\"{}\" onPointerExit", getEntity()->name);
     }
 
     void onDown() override
     {
-        engine::log::logInfo("onDown");
+        getEntity()->getComponent<engine::ui::uiImage>()->color = {0, 1, 0, 1};
+        engine::log::logInfo("\"{}\" onDown", getEntity()->name);
     }
 
     void onUp() override
     {
-        engine::log::logInfo("onUp");
+        getEntity()->getComponent<engine::ui::uiImage>()->color = {0, 0, 1, 1};
+        engine::log::logInfo("\"{}\" onUp", getEntity()->name);
     }
 };

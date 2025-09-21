@@ -31,7 +31,7 @@ struct uiSelectable : public component
     }
 
   protected:
-    static inline weakRef<uiSelectable> s_selected;
+    static inline weakRef<uiSelectable> s_selected, s_hovered;
     pointerRead *_pointerRead;
     std::function<void()> _onPointerEnterLambda;
     std::function<void()> _onPointerExitLambda;
@@ -42,16 +42,16 @@ struct uiSelectable : public component
         disallowMultipleComponents(uiSelectable);
         _pointerRead = getEntity()->ensureComponentExists<pointerRead>();
         _pointerRead->pushLock();
-        _onPointerEnterLambda = [this]() {
+        _pointerRead->onPointerEnter.push_back(_onPointerEnterLambda = [this]() {
             _isHovered = true;
             onPointerEnter();
-        };
-        _onPointerExitLambda = [this]() {
+            s_hovered = getWeakRefAs<uiSelectable>();
+        });
+        _pointerRead->onPointerExit.push_back(_onPointerExitLambda = [this]() {
             _isHovered = false;
             onPointerExit();
-        };
-        _pointerRead->onPointerEnter.push_back(_onPointerEnterLambda);
-        _pointerRead->onPointerExit.push_back(_onPointerExitLambda);
+            s_hovered = {};
+        });
         initialize_();
     }
 
@@ -112,14 +112,14 @@ struct uiSelectable : public component
             if (input::isKeyJustDown(input::key::mouseLeft))
             {
                 mouseLeftUp = false;
-                if (s_selected)
-                    s_selected->onDown();
+                if (s_hovered)
+                    s_hovered->onDown();
             }
             else if (!mouseLeftUp && input::isKeyUp(input::key::mouseLeft))
             {
                 mouseLeftUp = true;
-                if (s_selected)
-                    s_selected->onUp();
+                if (s_hovered)
+                    s_hovered->onUp();
             }
         });
         application::hooksMutex.unlock();

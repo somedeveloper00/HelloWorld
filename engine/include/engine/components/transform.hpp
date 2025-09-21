@@ -94,7 +94,7 @@ struct transform : public component
                 parentDirty = true;
             }
             else if (parentDirty)
-                transformRef._modelGlobalMatrix = parentModelGlobalMatrix * transformRef._modelMatrix;
+                transformRef._modelGlobalMatrix = parentModelGlobalMatrix = parentModelGlobalMatrix * transformRef._modelMatrix;
         }
         for (size_t i = 0; i < ent->getChildrenCount(); i++)
             updateModelMatricesRecursively_(ent->getChildAt(i), parentModelGlobalMatrix, parentDirty);

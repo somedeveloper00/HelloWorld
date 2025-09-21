@@ -10,7 +10,6 @@
 #include "glm/fwd.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include <chrono>
-#include <gl/gl.h>
 #include <string>
 #include <thread>
 
@@ -21,19 +20,19 @@ struct pointerRead : public component
 {
     createTypeInformation(pointerRead, component);
 
-    // gets called when pointer enters this object. executes before components update phase
+    // gets called when pointer enters this object. executes before components update phase, and after onPointerExit of the previous object.
     quickVector<std::function<void()>> onPointerEnter;
 
-    // gets called when pointer exists this object. executes before components update phase
+    // gets called when pointer exists this object. executes before components update phase, and before onPointerEnter of the next object.
     quickVector<std::function<void()>> onPointerExit;
 
   private:
     struct entry
     {
-        GLuint vao;
-        GLsizei trianglesCount;
-        glm::mat4 model;
-        pointerRead *instance;
+        GLuint vao = 0;
+        GLsizei trianglesCount = 0;
+        glm::mat4 model{};
+        pointerRead *instance = nullptr;
     };
 
   public:
@@ -77,8 +76,9 @@ struct pointerRead : public component
 
   private:
     using hashType = unsigned short;
+
+    // maximum number of hashes, also used as an invalid state for hashes
     static inline constexpr hashType hashTypeMax = hashType(-1);
-    static inline constexpr hashType invalidHash = hashType(-1);
 
     // entries for all hashes currently occupied
     // also works as a hash id itself, starting from 1 (because 0 is clear-color)
@@ -145,53 +145,65 @@ struct pointerRead : public component
             application::preComponentHooks.push_back([]() {
                 frameBufferDebug_();
                 bench("update screen object hashes");
+                if (input::isMouseInWindow())
+                {
+                    // update data
+                    for (size_t i = 0; i < s_hashesCount; i++)
+                        s_hashes[i].model = s_hashes[i].instance->_transform->getGlobalMatrix();
 
-                // update data
-                for (size_t i = 0; i < s_hashesCount; i++)
-                    s_hashes[i].model = s_hashes[i].instance->_transform->getGlobalMatrix();
+                    // render to frame buffer
+                    graphics::opengl::noBlendContext _; // disable blending (RAII)
+                    glBindFramebuffer(GL_FRAMEBUFFER, s_fbo);
+                    glClearColor(0, 0, 0, 0);
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    glUseProgram(s_program);
+                    for (size_t i = 0; i < s_hashesCount; i++)
+                        if (s_hashes[i].vao)
+                        {
+                            glBindVertexArray(s_hashes[i].vao);
+                            glUniformMatrix4fv(s_modelLocation, 1, GL_FALSE, glm::value_ptr(s_hashes[i].model));
+                            glUniform1ui(s_hashLocation, static_cast<GLuint>(i + 1)); // 0 is clear color
+                            glDrawElements(GL_TRIANGLES, s_hashes[i].trianglesCount, GL_UNSIGNED_INT, 0);
+                        }
+                    glUseProgram(0);
+                    glBindVertexArray(0);
 
-                // render to frame buffer
-                graphics::opengl::noBlendContext _; // disable blending (RAII)
-                glBindFramebuffer(GL_FRAMEBUFFER, s_fbo);
-                glClearColor(0, 0, 0, 0);
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                glUseProgram(s_program);
-                for (size_t i = 0; i < s_hashesCount; i++)
-                    if (s_hashes[i].vao)
+                    // readback
+                    glPixelStorei(GL_PACK_ALIGNMENT, 1); // avoid "row packing" issue
+                    glReadPixels(0, 0, s_screenHashesSizes.x, s_screenHashesSizes.y, GL_RED_INTEGER, GL_UNSIGNED_SHORT, s_screenHashes);
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+                    // update objects
+                    auto mousePos = input::getMousePosition();
+                    const auto ind = (graphics::getFrameBufferSize().y - mousePos.y) * s_screenHashesSizes.x + mousePos.x;
+                    const hashType newPointedId = s_screenHashes[ind] - 1;
+                    if (newPointedId == s_lastPointedId)
+                        return;
+                    // call onPointerExit
+                    if (s_lastPointedId != hashTypeMax)
                     {
-                        glBindVertexArray(s_hashes[i].vao);
-                        glUniformMatrix4fv(s_modelLocation, 1, GL_FALSE, glm::value_ptr(s_hashes[i].model));
-                        glUniform1ui(s_hashLocation, static_cast<GLuint>(i + 1)); // 0 is clear color
-                        glDrawElements(GL_TRIANGLES, s_hashes[i].trianglesCount, GL_UNSIGNED_INT, 0);
+                        const auto callback = s_hashes[s_lastPointedId].instance->onPointerExit;
+                        callback.forEach([](const auto &func) { func(); });
                     }
-                glUseProgram(0);
-                glBindVertexArray(0);
-
-                // readback
-                glPixelStorei(GL_PACK_ALIGNMENT, 1); // avoid "row packing" issue
-                glReadPixels(0, 0, s_screenHashesSizes.x, s_screenHashesSizes.y, GL_RED_INTEGER, GL_UNSIGNED_SHORT, s_screenHashes);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                glPixelStorei(GL_PACK_ALIGNMENT, 4);
-
-                // update objects
-                const auto mousePos = input::getMousePosition();
-                const auto ind = mousePos.x * s_screenHashesSizes.y + mousePos.y;
-                const hashType newPointedId = s_screenHashes[ind] - 1;
-                if (newPointedId == s_lastPointedId)
-                    return;
-                // call onPointerExit
-                if (s_lastPointedId != hashTypeMax && s_lastPointedId != invalidHash)
-                {
-                    const auto callback = s_hashes[s_lastPointedId].instance->onPointerExit;
-                    callback.forEach([](const auto &func) { func(); });
+                    // call onPointerEnter
+                    if (newPointedId != hashTypeMax)
+                    {
+                        const auto callback = s_hashes[newPointedId].instance->onPointerEnter;
+                        callback.forEach([](const auto &func) { func(); });
+                    }
+                    s_lastPointedId = newPointedId;
                 }
-                // call onPointerEnter
-                if (newPointedId != invalidHash)
+                else // mouse not in window
                 {
-                    const auto callback = s_hashes[newPointedId].instance->onPointerEnter;
-                    callback.forEach([](const auto &func) { func(); });
+                    // call onPointerExit
+                    if (s_lastPointedId != hashTypeMax)
+                    {
+                        const auto callback = s_hashes[s_lastPointedId].instance->onPointerExit;
+                        callback.forEach([](const auto &func) { func(); });
+                    }
+                    s_lastPointedId = hashTypeMax;
                 }
-                s_lastPointedId = newPointedId;
             });
             application::hooksMutex.unlock();
         }
@@ -250,7 +262,7 @@ struct pointerRead : public component
         if (input::isKeyJustDown(input::key::k))
         {
             graphics::opengl::debugModeContext _;
-            
+
             constexpr auto vertexShader = R"(
             #version 460 core
             const vec2 verts[3] = vec2[3](
