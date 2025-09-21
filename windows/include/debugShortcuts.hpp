@@ -77,7 +77,7 @@ static inline void tick_()
                 for (size_t i = 0; i < components.size(); i++)
                 {
                     engine::component &comp = *(engine::component *)components[i];
-                    componentsStr += comp.getTypeName();
+                    componentsStr += comp.getEnabled() ? comp.getTypeName() : (comp.getTypeName() + "(X)");
                     if (i != components.size() - 1)
                         componentsStr += ", ";
                 }

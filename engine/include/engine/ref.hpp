@@ -47,6 +47,7 @@ struct ref
 
     // move ref object
     ref(ref<T, Owner> &&other) noexcept
+        requires(!Owner) // cannot move an owning ref
         : _holderPtr(std::exchange(other._holderPtr, nullptr))
     {
     }

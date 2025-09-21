@@ -5,7 +5,6 @@
 #include "engine/app.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/errorHandling.hpp"
-#include "engine/quickVector.hpp"
 #include "engine/window.hpp"
 #include "glm/fwd.hpp"
 #include "glm/gtc/type_ptr.hpp"
@@ -16,6 +15,7 @@
 namespace engine
 {
 // causes this object to participate in the world-space pointer down recognition (useful for detecting clicks)
+// disabling this component will make it non-effective
 struct pointerRead : public component
 {
     createTypeInformation(pointerRead, component);
@@ -30,7 +30,7 @@ struct pointerRead : public component
     struct entry
     {
         GLuint vao = 0;
-        GLsizei trianglesCount = 0;
+        GLsizei verticesCount = 0;
         glm::mat4 model{};
         pointerRead *instance = nullptr;
     };
@@ -38,9 +38,10 @@ struct pointerRead : public component
   public:
     // setup a vao and triangles count to be used by this pointerRead
     // vao will not be deleted in this system, and it'll be expected to be available for the lifetime of this component
-    void setVertices(const GLuint vao, const GLsizei trianglesCount)
+    // verticesCount refers to the number of vertices
+    void setVertices(const GLuint vao, const GLsizei verticesCount)
     {
-        s_hashes[_id].trianglesCount = trianglesCount;
+        s_hashes[_id].verticesCount = verticesCount;
         s_hashes[_id].vao = vao;
     }
 
@@ -59,19 +60,28 @@ struct pointerRead : public component
         }
         _transform = getEntity()->ensureComponentExists<transform>();
         _transform->pushLock();
-
-        // add to hashes
-        _id = s_hashesCount++;
-        s_hashes[_id] = entry{.model = _transform->getGlobalMatrix(), .instance = this};
     }
 
     void removed_() override
     {
         _transform->popLock();
+    }
 
+    void enabled_() override
+    {
+        log::logInfo("{} enabled", getEntity()->name);
+        // add to hashes
+        _id = s_hashesCount++;
+        s_hashes[_id] = entry{.model = _transform->getGlobalMatrix(), .instance = this};
+    }
+
+    void disabled_() override
+    {
+        log::logInfo("{} disabled", getEntity()->name);
         // remove from hashes
         s_hashes[_id] = std::move(s_hashes[--s_hashesCount]);
-        s_hashes[_id].instance->_id = _id;
+        if (_id != s_hashesCount)
+            s_hashes[_id].instance->_id = _id;
     }
 
   private:
@@ -94,7 +104,7 @@ struct pointerRead : public component
     static inline glm::ivec2 s_screenHashesSizes;
 
     // for hashes
-    static inline GLuint s_texture = 0, s_fbo = 0;
+    static inline GLuint s_texture = 0, s_frameBuffer = 0;
 
     // id of the last object under the pointer (in the last frame). starts from 0
     static inline hashType s_lastPointedId = hashTypeMax;
@@ -153,7 +163,7 @@ struct pointerRead : public component
 
                     // render to frame buffer
                     graphics::opengl::noBlendContext _; // disable blending (RAII)
-                    glBindFramebuffer(GL_FRAMEBUFFER, s_fbo);
+                    glBindFramebuffer(GL_FRAMEBUFFER, s_frameBuffer);
                     glClearColor(0, 0, 0, 0);
                     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                     glUseProgram(s_program);
@@ -163,7 +173,7 @@ struct pointerRead : public component
                             glBindVertexArray(s_hashes[i].vao);
                             glUniformMatrix4fv(s_modelLocation, 1, GL_FALSE, glm::value_ptr(s_hashes[i].model));
                             glUniform1ui(s_hashLocation, static_cast<GLuint>(i + 1)); // 0 is clear color
-                            glDrawElements(GL_TRIANGLES, s_hashes[i].trianglesCount, GL_UNSIGNED_INT, 0);
+                            glDrawElements(GL_TRIANGLES, s_hashes[i].verticesCount, GL_UNSIGNED_INT, 0);
                         }
                     glUseProgram(0);
                     glBindVertexArray(0);
@@ -233,9 +243,9 @@ struct pointerRead : public component
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
             // frame buffer
-            if (!s_fbo)
-                glGenFramebuffers(1, &s_fbo);
-            glBindFramebuffer(GL_FRAMEBUFFER, s_fbo);
+            if (!s_frameBuffer)
+                glGenFramebuffers(1, &s_frameBuffer);
+            glBindFramebuffer(GL_FRAMEBUFFER, s_frameBuffer);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_texture, 0);
             GLenum db[] = {GL_COLOR_ATTACHMENT0};
             glDrawBuffers(1, db);
@@ -270,7 +280,8 @@ struct pointerRead : public component
                 vec2( 3.0, -1.0),
                 vec2(-1.0,  3.0)
             );
-            void main() {
+            void main() 
+            {
                 gl_Position = vec4(verts[gl_VertexID], 0.0, 1.0);
             }
             )";
@@ -279,17 +290,32 @@ struct pointerRead : public component
             layout(binding = 0) uniform usampler2D uTex;
             out vec4 FragColor;
 
-            void main() {
-                // Convert window coords to integer texel coordinates
+            // 32-bit integer hash -> vec3 in [0,1]
+            vec3 hash3(uint n)
+            {
+                // integer scrambling: different large odd constants for each channel
+                n ^= n >> 16u;
+                n *= 0x7feb352du;  // large odd prime
+                n ^= n >> 15u;
+                n *= 0x846ca68bu;
+                n ^= n >> 16u;
+
+                // create three different seeds by bit rotation & mixing
+                uint x = n;
+                uint y = n * 0x9e3779b1u;  // golden-ratio constant
+                uint z = n * 0x85ebca77u;
+
+                // convert to [0,1] floats using 2^-32
+                const float inv32 = 1.0 / 4294967296.0; // 1/2^32
+                return vec3(float(x), float(y), float(z)) * inv32;
+            }
+
+            void main() 
+            {
                 ivec2 texel = ivec2(gl_FragCoord.xy);
-
-                // Fetch the 16-bit unsigned value
-                uint val = texelFetch(uTex, texel, 0).r;
-
-                // Normalize to [0,1] for display (65535 = max of uint16)
-                float gray = float(val) / 1;//65535.0;
-
-                FragColor = vec4(gray, gray, gray, 1.0);
+                uint hash = texelFetch(uTex, texel, 0).r;
+                vec3 result = hash3(hash);
+                FragColor = vec4(result, 1.0);
             }
             )";
 

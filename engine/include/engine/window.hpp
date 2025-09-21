@@ -636,17 +636,6 @@ struct input final
     static inline void updateCursorPos(const double x, const double y);
 };
 
-inline input::state operator|(input::state a, input::state b) noexcept
-{
-    using underlying = std::underlying_type_t<engine::input::input::state>;
-    return static_cast<input::state>(static_cast<underlying>(a) | static_cast<underlying>(b));
-}
-inline input::state operator&(input::state a, input::state b) noexcept
-{
-    using underlying = std::underlying_type_t<engine::input::input::state>;
-    return static_cast<input::state>(static_cast<underlying>(a) & static_cast<underlying>(b));
-}
-
 struct graphics final
 {
     friend input;
@@ -922,7 +911,7 @@ struct graphics final
             onRendersMutex.unlock();
         }
 
-        // returns the vao for a square from -1 to 1 across x/y (no z axis). it has 2 triangles
+        // returns the vao for a square from -1 to 1 across x/y (no z axis). it has 2 triangles and 6 indices
         static inline GLuint getSquareVao()
         {
             static GLuint s_vao = 0;
@@ -1011,6 +1000,16 @@ struct graphics final
 
 #ifndef GAMEENGINE_WINDOWS_H
 #define GAMEENGINE_WINDOWS_H
+inline input::state operator|(input::state a, input::state b) noexcept
+{
+    using underlying = std::underlying_type_t<input::state>;
+    return static_cast<input::state>(static_cast<underlying>(a) | static_cast<underlying>(b));
+}
+inline input::state operator&(input::state a, input::state b) noexcept
+{
+    using underlying = std::underlying_type_t<input::state>;
+    return static_cast<input::state>(static_cast<underlying>(a) & static_cast<underlying>(b));
+}
 inline void input::updateCursorPos(const double x, const double y)
 {
     if (x >= 0 && x < graphics::s_frameBufferSize.x &&

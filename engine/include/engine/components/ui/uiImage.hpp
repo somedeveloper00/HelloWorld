@@ -1,10 +1,12 @@
 #pragma once
 
+#include "engine/components/pointerRead.hpp"
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/data.hpp"
 #include "engine/errorHandling.hpp"
 #include "engine/window.hpp"
 #include "glm/gtc/type_ptr.hpp"
+#include <gl/gl.h>
 
 namespace engine::ui
 {
@@ -16,18 +18,23 @@ struct uiImage : public component
 
   protected:
     static inline quickVector<uiImage *> s_instances;
+    static inline GLuint s_vao;
     weakRef<uiTransform> _uiTransform;
 
     void created_() override
     {
         initialize_();
         _uiTransform = getEntity()->ensureComponentExists<uiTransform>();
+        auto pointerReadComponent = getEntity()->ensureComponentExists<pointerRead>();
+        pointerReadComponent->pushLock();
+        pointerReadComponent->setVertices(s_vao, 6);
         s_instances.push_back(this);
     }
 
     void removed_() override
     {
         s_instances.erase(this);
+        getEntity()->getComponent<pointerRead>()->popLock();
     }
 
   private:
@@ -65,10 +72,11 @@ struct uiImage : public component
             fatalAssert(program, "could not create opengl program for uiImage component");
             static GLint modelMatrixLocation = glGetUniformLocation(program, "modelMatrix");
             static GLint colorLocation = glGetUniformLocation(program, "color");
+            s_vao = graphics::opengl::getSquareVao();
 
             graphics::opengl::addRendererHook(1, []() {
                 bench("rendering uiImage");
-                glBindVertexArray(graphics::opengl::getSquareVao());
+                glBindVertexArray(s_vao);
                 glUseProgram(program);
                 s_instances.forEach([](const uiImage *instance) {
                     const auto &matrix = instance->_uiTransform->getGlobalMatrix();

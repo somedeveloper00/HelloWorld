@@ -2,6 +2,7 @@
 
 #include "benchmark.hpp"
 #include "common/typeInfo.hpp"
+#include "engine/ref.hpp"
 #include "ittnotify.h"
 #include "log.hpp"
 #include "quickVector.hpp"
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -52,12 +54,12 @@ struct component
 
     void setEnabled(const bool enabled) noexcept
     {
-        _state = enabled ? State::Enabling : State::Disabling;
+        _state |= enabled ? state::enabling : state::disabling;
     }
 
-    bool getDisabled() const noexcept
+    bool getEnabled() const noexcept
     {
-        return _state == State::Enabled;
+        return _state & state::enabled;
     }
 
     // increases this component's lock (makes sure this component will not be removed).
@@ -90,25 +92,53 @@ struct component
     virtual void disabled_() {};
 
   private:
-    enum State : uint8_t
+    enum state : uint8_t
     {
-        Enabled = 0,
-        Removing = 1 << 0,
-        Enabling = 1 << 1,
-        Disabling = 1 << 2,
+        enabled = 1 << 0,
+        removing = 1 << 1,
+        enabling = 1 << 2,
+        disabling = 1 << 3,
+        disabling_or_enabling = enabling | disabling
     };
 
+    friend inline state operator|(const state a, const state b) noexcept
+    {
+        using underlying = std::underlying_type_t<state>;
+        return static_cast<state>(static_cast<underlying>(a) | static_cast<underlying>(b));
+    }
+
+    friend inline state operator&(const state a, const state b) noexcept
+    {
+        using underlying = std::underlying_type_t<state>;
+        return static_cast<state>(static_cast<underlying>(a) & static_cast<underlying>(b));
+    }
+
+    friend inline state operator~(const state a) noexcept
+    {
+        using underlying = std::underlying_type_t<state>;
+        return static_cast<state>(~static_cast<underlying>(a));
+    }
+
+    friend inline state &operator|=(state &a, const state b) noexcept
+    {
+        using underlying = std::underlying_type_t<state>;
+        a = static_cast<state>(static_cast<underlying>(a) | static_cast<underlying>(b));
+        return a;
+    }
+
+    friend inline state &operator&=(state &a, const state b) noexcept
+    {
+        using underlying = std::underlying_type_t<state>;
+        a = static_cast<state>(static_cast<underlying>(a) & static_cast<underlying>(b));
+        return a;
+    }
+
     weakRef<entity> _entity;
-    State _state = State::Enabled;
+    state _state = state::enabled;
     weakRef<component> _selfRef{};
 
     // lock for removing. if value is beyond 0, cannot remove this component
     unsigned char _removeLock;
-
-    bool awaitingRemoval_() const
-    {
-        return _state & State::Removing;
-    }
 };
 
 // an entity in the engine. it can have components and children entities
@@ -246,13 +276,16 @@ struct entity
     weakRef<T> addComponent(Args &&...args)
     {
         assertComponentTypeValidity_<T>();
-        ownRef<T> component{true, std::forward<Args>(args)...};
-        component->_entity = _selfRef;
-        component->_selfRef = component;
-        _newComponents.emplace_back(component);
-        _newComponents.back()->created_();
-        _newComponents.back()->enabled_();
-        return component;
+        ownRef<T> newComponentAsT{true, std::forward<Args>(args)...};
+
+        ownRef<component> newComponent = newComponentAsT;
+        newComponent->_entity = _selfRef;
+        newComponent->_selfRef = newComponent;
+        _newComponents.emplace_back(newComponent);
+        newComponent->created_();
+        newComponent->enabled_();
+
+        return newComponentAsT;
     }
 
     // returns found component or nullptr
@@ -382,32 +415,29 @@ struct entity
         _newComponents.clear();
     }
 
-    void removeComponents_()
+    void updateComponentStates_()
     {
         _components.eraseIf([](const ownRef<component> &comp) {
-            return false;
-            if (comp->awaitingRemoval_())
+            auto state = comp->_state;
+            if (comp->_state & component::state::removing)
             {
                 comp->disabled_();
                 comp->removed_();
                 return true;
             }
-        });
-    }
-
-    void updateComponentStates_()
-    {
-        _components.forEach([](const ownRef<component> &comp) {
-            if (comp->_state == component::State::Enabling)
+            if (comp->_state & component::state::enabling)
             {
-                comp->_state = component::State::Enabled;
+                comp->_state &= ~component::state::disabling_or_enabling;
+                comp->_state |= component::state::enabled;
                 comp->enabled_();
             }
-            else if (comp->_state == component::State::Disabling)
+            else if (comp->_state & component::state::disabling)
             {
-                comp->_state = component::State::Enabled;
+                comp->_state &= ~component::state::disabling_or_enabling;
+                comp->_state &= ~component::state::enabled;
                 comp->disabled_();
             }
+            return false;
         });
     }
 
@@ -533,9 +563,8 @@ struct application
                 {
                     bench("updating component states");
                     entity::s_entities.forEachParallel([](const weakRef<entity> &entity) {
-                        entity->removeComponents_();
-                        entity->addNewComponents_();
                         entity->updateComponentStates_();
+                        entity->addNewComponents_();
                     });
                 }
 
@@ -627,7 +656,7 @@ inline void component::remove() noexcept
         log::logError("Cannot remove component \"{}\" from entity \"{}\", because other components depend on this.", getTypeName(), _entity->name);
         return;
     }
-    _state = static_cast<State>(_state | State::Removing);
+    _state |= state::removing;
 }
 
 #endif

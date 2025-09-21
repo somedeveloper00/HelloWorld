@@ -2,6 +2,7 @@
 #include "debugShortcuts.hpp"
 #include "engine/app.hpp"
 #include "engine/components/camera.hpp"
+#include "engine/components/pointerRead.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
@@ -32,7 +33,7 @@ int main()
 
     auto imageEntity2 = engine::entity::create("image-inner");
     imageEntity2->setParent(imageEntity);
-    imageEntity2->addComponent<animateTransform>()->rotationValue = 1.f;
+    // imageEntity2->addComponent<animateTransform>()->rotationValue = 1.f;
     imageEntity2->addComponent<engine::ui::uiImage>()->color = {0, 0, 0, 1};
     {
         auto ref = imageEntity2->getComponent<engine::ui::uiTransform>();
@@ -52,6 +53,7 @@ int main()
     auto pointer = engine::entity::create("pointer");
     pointer->setParent(canvasEntity);
     pointer->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
+    pointer->getComponent<engine::pointerRead>()->setEnabled(false);
     auto trans = pointer->getComponent<engine::ui::uiTransform>(); //->scale = glm::vec3{0.1f};
     trans->minAnchor = {0.5f, 0.5f};
     trans->maxAnchor = {0.5f, 0.5f};
