@@ -1,19 +1,19 @@
 #include "animateTransform.hpp"
+#include "common/environment.hpp"
 #include "debugShortcuts.hpp"
 #include "engine/app.hpp"
 #include "engine/components/camera.hpp"
 #include "engine/components/pointerRead.hpp"
-#include "engine/components/transform.hpp"
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
+#include "engine/components/ui/uiImageButton.hpp"
 #include "engine/window.hpp"
-#include "glm/ext/matrix_transform.hpp"
 #include "glm/fwd.hpp"
-#include "glm/trigonometric.hpp"
-#include "pointerDebug.hpp"
 
 int main()
 {
+    engine::setEnvironment("OMP_WAIT_POLICY", "passive");
+
     __itt_pause();
     engine::log::initialize();
     engine::graphics::initialize("Hello Enigne!", {100, 100}, {200, 200}, false, false, engine::graphics::renderer::opengl);
@@ -43,16 +43,17 @@ int main()
 
     auto imageEntity3 = engine::entity::create("image-child");
     imageEntity3->setParent(imageEntity2);
-    imageEntity3->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
+    auto btn = imageEntity3->addComponent<engine::ui::uiImageButton>();
+    // imageEntity3->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
     {
         auto ref = imageEntity3->getComponent<engine::ui::uiTransform>();
         ref->minAnchor.x = 0.5f;
         ref->position.z -= 0.2f;
     }
-    imageEntity3->addComponent<pointerDebug>();
+
     auto pointer = engine::entity::create("pointer");
-    pointer->setParent(canvasEntity);
     pointer->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
+    pointer->setParent(engine::entity::create("pointer-canvas")->addComponent<engine::ui::canvas>()->getEntity());
     pointer->getComponent<engine::pointerRead>()->setEnabled(false);
     auto trans = pointer->getComponent<engine::ui::uiTransform>(); //->scale = glm::vec3{0.1f};
     trans->minAnchor = {0.5f, 0.5f};
@@ -61,11 +62,8 @@ int main()
     trans->position = {100, 100, -0.7f};
 
     engine::application::preComponentHooks.push_back([&]() {
-        // imageEntity3->getComponent<engine::ui::uiTransform>()->maxAnchor.x = pow(sin(engine::time::getTotalTime()), 2);
-        // imageEntity3->getComponent<engine::ui::uiTransform>()->markDirty();
         pointer->getComponent<engine::ui::uiTransform>()->position = {engine::input::getMousePositionCentered(), -.7f};
         pointer->getComponent<engine::ui::uiTransform>()->markDirty();
-        // engine::log::logInfo("{}", engine::input::getMousePositionCentered());
     });
 
     engine::time::setTargetFps(120);

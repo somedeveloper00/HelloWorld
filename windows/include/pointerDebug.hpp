@@ -36,13 +36,13 @@ struct pointerDebug : public engine::ui::uiSelectable
         engine::log::logInfo("\"{}\" onPointerExit", getEntity()->name);
     }
 
-    void onDown() override
+    void onPointerDown() override
     {
         getEntity()->getComponent<engine::ui::uiImage>()->color = {0, 1, 0, 1};
         engine::log::logInfo("\"{}\" onDown", getEntity()->name);
     }
 
-    void onUp() override
+    void onPointerUp() override
     {
         getEntity()->getComponent<engine::ui::uiImage>()->color = {0, 0, 1, 1};
         engine::log::logInfo("\"{}\" onUp", getEntity()->name);

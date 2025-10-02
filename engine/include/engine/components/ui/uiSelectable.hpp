@@ -1,14 +1,13 @@
 #pragma once
 
-#include "common/componentUtils.hpp"
 #include "engine/app.hpp"
 #include "engine/components/pointerRead.hpp"
-#include "engine/ref.hpp"
+#include "engine/components/ui/canvasRendering.hpp"
 #include "engine/window.hpp"
 
 namespace engine::ui
 {
-// an object that's selectable. usually inherited
+// an object that's selectable. usually inherited. disabling this will make this object not selectable without removing the component entirely
 struct uiSelectable : public component
 {
     createTypeInformation(uiSelectable, component);
@@ -24,22 +23,36 @@ struct uiSelectable : public component
     {
         if (s_selected == instance)
             return;
+        if (s_selected)
+            s_selected->onUnselected();
         s_selected = instance;
-        instance->onUnselected();
         if (s_selected)
             s_selected->onSelected();
     }
 
+    // select self
+    void select() const noexcept
+    {
+        setSelected(_uiSelectableWeakRef);
+    }
+
+    // deselect self
+    void unselect() const noexcept
+    {
+        if (s_selected == this)
+            setSelected({});
+    }
+
   protected:
-    static inline weakRef<uiSelectable> s_selected, s_hovered;
     pointerRead *_pointerRead;
-    std::function<void()> _onPointerEnterLambda;
-    std::function<void()> _onPointerExitLambda;
-    bool _isHovered;
+    uiTransform *_uiTransform;
 
     void created_() override
     {
         disallowMultipleComponents(uiSelectable);
+        _uiSelectableWeakRef = getWeakRefAs<uiSelectable>();
+        _uiTransform = getEntity()->ensureComponentExists<uiTransform>();
+        _uiTransform->pushLock();
         _pointerRead = getEntity()->ensureComponentExists<pointerRead>();
         _pointerRead->pushLock();
         _pointerRead->onPointerEnter.push_back(_onPointerEnterLambda = [this]() {
@@ -57,6 +70,7 @@ struct uiSelectable : public component
 
     void removed_() override
     {
+        _uiTransform->popLock();
         _pointerRead->popLock();
         {
             const auto target = _onPointerEnterLambda.target<void (*)()>();
@@ -72,6 +86,11 @@ struct uiSelectable : public component
         }
     }
 
+    void disabled_() override
+    {
+        unselect();
+    }
+
     // called when pointer enters it (doesn't get called when using keyboard navigation)
     virtual void onPointerEnter()
     {
@@ -83,12 +102,12 @@ struct uiSelectable : public component
     }
 
     // called when pointer is down on this
-    virtual void onDown()
+    virtual void onPointerDown()
     {
     }
 
     // called when pointer is up, after it was down on this
-    virtual void onUp()
+    virtual void onPointerUp()
     {
     }
 
@@ -103,26 +122,30 @@ struct uiSelectable : public component
     }
 
   private:
+    static inline weakRef<uiSelectable> s_selected, s_hovered;
+    std::function<void()> _onPointerEnterLambda;
+    std::function<void()> _onPointerExitLambda;
+    weakRef<uiSelectable> _uiSelectableWeakRef;
+    bool _isHovered;
+
     static inline void initialize_()
     {
         ensureExecutesOnce();
-        application::hooksMutex.lock();
         application::preComponentHooks.push_back([]() {
             static bool mouseLeftUp = false;
             if (input::isKeyJustDown(input::key::mouseLeft))
             {
                 mouseLeftUp = false;
                 if (s_hovered)
-                    s_hovered->onDown();
+                    s_hovered->onPointerDown();
             }
             else if (!mouseLeftUp && input::isKeyUp(input::key::mouseLeft))
             {
                 mouseLeftUp = true;
                 if (s_hovered)
-                    s_hovered->onUp();
+                    s_hovered->onPointerUp();
             }
         });
-        application::hooksMutex.unlock();
     }
 };
 } // namespace engine::ui

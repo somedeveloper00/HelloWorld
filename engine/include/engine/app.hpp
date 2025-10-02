@@ -11,7 +11,6 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -524,9 +523,6 @@ struct application
     // hooks to execute after the application is closed
     static inline auto &onExitHooks = *new quickVector<std::function<void()>>();
 
-    // for function pointer lists in this class
-    static inline std::mutex hooksMutex;
-
     static inline void run()
     {
         TracyPlotConfig(s_tracyEntityCountName, tracy::PlotFormatType::Number, false, false, tracy::Color::AliceBlue);
@@ -542,13 +538,11 @@ struct application
             time::_totalFrames++;
             lastFrameTime = currentFrameTime;
 
-            hooksMutex.lock();
             auto preComponentHooksCopy = preComponentHooks;
             auto postComponentHooksCopy = postComponentHooks;
             auto onExitHooksCopy = onExitHooks;
             auto postLoopExecutesCopy = _postLoopExecutes;
             _postLoopExecutes.clear();
-            hooksMutex.unlock();
 
             preComponentHooksCopy.forEach([](const auto &func) { func(); });
 
@@ -556,13 +550,13 @@ struct application
                 bench("handling entities");
                 {
                     bench("updating entities");
-                    entity::s_entities.forEachParallel([](const weakRef<entity> &entity) {
+                    entity::s_entities.forEach([](const weakRef<entity> &entity) {
                         entity->update_();
                     });
                 }
                 {
                     bench("updating component states");
-                    entity::s_entities.forEachParallel([](const weakRef<entity> &entity) {
+                    entity::s_entities.forEach([](const weakRef<entity> &entity) {
                         entity->updateComponentStates_();
                         entity->addNewComponents_();
                     });
@@ -614,9 +608,7 @@ struct application
 
         {
             bench("onExitHooks");
-            hooksMutex.lock();
             auto onExitHooksCopy = onExitHooks;
-            hooksMutex.unlock();
             onExitHooksCopy.forEach([](const auto &func) { func(); });
         }
     }

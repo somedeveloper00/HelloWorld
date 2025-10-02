@@ -2,6 +2,7 @@
 
 #include "common/componentUtils.hpp"
 #include "engine/app.hpp"
+#include "engine/window.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -64,7 +65,6 @@ struct transform : public component
     static inline void initialize_()
     {
         ensureExecutesOnce();
-        application::hooksMutex.lock();
         application::postComponentHooks.insert(0, []() {
             bench("update transforms");
             // update matrices
@@ -74,7 +74,6 @@ struct transform : public component
                 updateModelMatricesRecursively_(entity::getRootEntityAt(i), globalModelMatrix, false);
             }
         });
-        application::hooksMutex.unlock();
     }
 
     static inline void updateModelMatricesRecursively_(entity *ent, glm::mat4 &parentModelGlobalMatrix, bool parentDirty)
@@ -96,8 +95,9 @@ struct transform : public component
             else if (parentDirty)
                 transformRef._modelGlobalMatrix = parentModelGlobalMatrix = parentModelGlobalMatrix * transformRef._modelMatrix;
         }
-        for (size_t i = 0; i < ent->getChildrenCount(); i++)
-            updateModelMatricesRecursively_(ent->getChildAt(i), parentModelGlobalMatrix, parentDirty);
+        ent->forEachChild([&parentModelGlobalMatrix, &parentDirty](entity *child) {
+            updateModelMatricesRecursively_(child, parentModelGlobalMatrix, parentDirty);
+        });
     }
 
     void created_() override

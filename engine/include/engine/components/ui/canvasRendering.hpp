@@ -1,27 +1,88 @@
 #pragma once
 
-#include "common/componentUtils.hpp"
 #include "engine/app.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/quickVector.hpp"
-#include "engine/window.hpp"
 #include "glm/ext/matrix_transform.hpp"
+#include "glm/fwd.hpp"
+#include <algorithm>
 
 namespace engine::ui
 {
 struct canvas;
 
 // 2D transform for UI elements
-struct uiTransform : public transform
+struct uiTransform final : public transform
 {
-    createTypeInformation(uiTransform, transform);
-
     friend canvas;
+
+    createTypeInformation(uiTransform, transform);
 
     uiTransform()
         : transform(true)
     {
     }
+
+    enum layout
+    {
+        // no layouting. corresponds to layoutNoneProperties
+        none,
+        // horizontal list layout. corresponds to layoutHorizontalProperties
+        horizontal,
+        // vertical list layout. corresponds to layoutVerticalProperties
+        vertical
+    };
+
+    // define properties shared by layout types
+#define CommonProps()                                                      \
+    /* preferred size in canvas units scale */                             \
+    glm::vec2 preferedSize{100, 100};                                      \
+    /* space between this and its children at the four sides*/             \
+    glm::vec4 margin{5, 5, 5, 5};                                          \
+    /* space between this and its parent at the four sides*/               \
+    glm::vec4 padding{5, 5, 5, 5};                                         \
+    /* used in relation to its siblings when filling the parent layout.    \
+    value of 0 in any axis means not filling the parent along that axis */ \
+    glm::vec2 weight{0, 0};
+
+#define ArrayLayoutCommonProps()                            \
+    /* spacing in canvas unit scale between the children */ \
+    float elementsSpacing{5};                               \
+    /* if true, layout starts from the end along the axis*/ \
+    bool startFromEnd{false};
+
+    // properties for the layout::none layout type
+    struct layoutNoneProperties
+    {
+        CommonProps();
+    };
+
+    // properties for the layout::horizontal layout type
+    struct layoutHorizontalProperties
+    {
+        CommonProps();
+        ArrayLayoutCommonProps();
+    };
+
+    // properties for the layout::vertical layout type
+    struct layoutVerticalProperties
+    {
+        CommonProps();
+        ArrayLayoutCommonProps();
+    };
+
+#undef ArrayLayoutCommonProps
+#undef CommonProps
+
+    // layout type for this uiTransform
+    layout layout = layout::none;
+
+    // properties for the selected layout type
+    union {
+        layoutNoneProperties none{};
+        layoutHorizontalProperties horizontal;
+        layoutVerticalProperties vertical;
+    } layoutProperties;
 
     // anchor in parent space (takes up bottom-left)
     glm::vec2 minAnchor{0.f, 0.f};
@@ -41,9 +102,12 @@ struct uiTransform : public transform
         _uiTransformDirty = true;
     }
 
-  protected:
+  private:
     // used for optimization
     bool _uiTransformDirty = true;
+
+    // used for layout calculations
+    glm::vec2 _calculatedPreferedSize{0, 0};
 
     void created_() override
     {
@@ -51,28 +115,75 @@ struct uiTransform : public transform
         initialize_();
     }
 
-  private:
+    float getWeightX() const noexcept
+    {
+        switch (layout)
+        {
+        case none:
+            return layoutProperties.none.weight.x;
+        case horizontal:
+            return layoutProperties.horizontal.weight.x;
+        case vertical:
+            return layoutProperties.vertical.weight.x;
+            break;
+        }
+        return 0;
+    }
+
+    float getWeightY() const noexcept
+    {
+        switch (layout)
+        {
+        case none:
+            return layoutProperties.none.weight.y;
+        case horizontal:
+            return layoutProperties.horizontal.weight.y;
+        case vertical:
+            return layoutProperties.vertical.weight.y;
+            break;
+        }
+        return 0;
+    }
+
     static inline void initialize_()
     {
         ensureExecutesOnce();
-        application::hooksMutex.lock();
         application::postComponentHooks.push_back([]() {
-            bench("update uiTransforms");
-            entity::forEachRootEntity([](const weakRef<entity> &ent) {
-                updateMatricesRecursively_({}, {1}, *ent, false, false);
-            });
+            updateUiTransforms_(false);
         });
-        application::hooksMutex.unlock();
         graphics::frameBufferSizeChanged.push_back([]() {
-            bench("update uiTransforms");
-            entity::forEachRootEntity([](const weakRef<entity> &ent) {
-                updateMatricesRecursively_({}, {1}, *ent, true, false);
-            });
+            updateUiTransforms_(true);
+        });
+    }
+
+    static inline void updateUiTransforms_(const bool parentDirty)
+    {
+        bench("update uiTransforms");
+
+        entity::forEachRootEntity([](entity *ent) {
+            // update layout | first pass | update their preferred sizes recursively
+            recursivelyUpdateLayoutPreferedSizes_(ent);
+            // update layout | second pass | fill
+            recursivelyUpdateLayoutsPreferedSizesByFill_(ent);
+            // update layout | third pass | actually update transforms
+            recursivelyUpdateTransforms_(ent, {0, 0}, false);
+
+            // update matrices
+            updateMatricesRecursively_({}, {1}, *ent, true, false);
         });
     }
 
     // update canvas space rectangles of this uiTransform component and all its children's
     static inline void updateMatricesRecursively_(const glm::vec2 &canvasUnit, const glm::mat4 &parentGlobalMatrix, entity &ent, bool parentDirty, bool skipCanvas);
+
+    // traverses parents from children upwards and sets their _calculatedPreferedSize regardless of fill weights
+    static inline glm::vec2 recursivelyUpdateLayoutPreferedSizes_(const entity *ent);
+
+    // traverses children from parent downwards and sets their children's _calculatedPreferedSize by fill weights
+    static inline void recursivelyUpdateLayoutsPreferedSizesByFill_(const entity *ent);
+
+    // traverses children from parent downwards and sets the properties that affect their matrices
+    static inline void recursivelyUpdateTransforms_(const entity *ent, const glm::vec2 sizeUnit, const bool skipSelf);
 };
 
 // renders UI
@@ -91,7 +202,7 @@ struct canvas : public component
   protected:
     // scale unit for this canvas in canvas-space
     glm::vec2 _unit{1, 1};
-    weakRef<transform> _transform;
+    transform *_transform;
 
     // returns first parent
     static inline weakRef<canvas> findClosestCanvas_(const entity *startingEntity)
@@ -101,9 +212,9 @@ struct canvas : public component
 
     void created_() override
     {
+        initialize_();
         s_canvases.push_back(this);
         _transform = getEntity()->ensureComponentExists<transform>();
-        initialize_();
         _transform->pushLock();
         updateScaleUnit_();
 
@@ -168,7 +279,7 @@ inline void uiTransform::updateMatricesRecursively_(const glm::vec2 &canvasUnit,
                                                   ref.deltaSize * canvasUnit,   // delta size
                                               1);
             const glm::vec3 position = glm::vec3((ref.minAnchor + ref.maxAnchor) - 1.f - ref.pivot, 0) + // anchor size and pivot
-                                       ref.position * glm::vec3(canvasUnit * 2.f, 1);                          // position delta
+                                       ref.position * glm::vec3(canvasUnit * 2.f, 1);                    // position delta
             const glm::quat rotation = ref.rotation;                                                     // no conversion
             // update matrix
             ref._modelMatrix = glm::translate(glm::mat4(1), position) * // position
@@ -183,8 +294,234 @@ inline void uiTransform::updateMatricesRecursively_(const glm::vec2 &canvasUnit,
         });
         return;
     }
-    ent.forEachChild([&](const weakRef<entity> &child) {
+    ent.forEachChild([&canvasUnit, &parentGlobalMatrix, parentDirty](entity *child) {
         updateMatricesRecursively_(canvasUnit, parentGlobalMatrix, *child, parentDirty, false);
+    });
+}
+
+inline glm::vec2 uiTransform::recursivelyUpdateLayoutPreferedSizes_(const entity *ent)
+{
+    if (uiTransform *instance = ent->getComponent<uiTransform>())
+    {
+        switch (instance->layout)
+        {
+        case none: {
+#define props instance->layoutProperties.none
+            // get the max of its children
+            glm::vec2 childrenMax{0, 0};
+            ent->forEachChild([&childrenMax](entity *child) {
+                const auto childSize = recursivelyUpdateLayoutPreferedSizes_(child);
+                childrenMax.x = std::max(childSize.x, childrenMax.x);
+                childrenMax.y = std::max(childSize.y, childrenMax.y);
+            });
+            // calculate final size
+            instance->_calculatedPreferedSize = glm::vec2(
+                // width
+                std::max(childrenMax.x, props.preferedSize.x) + // must at least fit children
+                    props.padding.x + props.padding.z           // sum of padding along x
+                ,
+                // height
+                std::max(childrenMax.y, props.preferedSize.y) + // must at least fit children
+                    props.padding.y + props.padding.w           // sum of padding along y
+            );
+            return instance->_calculatedPreferedSize;
+#undef props
+        }
+        case horizontal: {
+#define props instance->layoutProperties.horizontal
+            // get the sum of its children
+            glm::vec2 childrenSum{0, 0};
+            ent->forEachChild([&childrenSum, spacing = props.elementsSpacing](entity *child) {
+                const auto childSize = recursivelyUpdateLayoutPreferedSizes_(child);
+                childrenSum.x += childSize.x + spacing;
+                childrenSum.y = std::max(childSize.y, childrenSum.y);
+            });
+            // remove extra spacing (5 children will need 4 spacing)
+            childrenSum.x -= childrenSum.x <= 0 ? 0 : props.elementsSpacing;
+            // find final size
+            instance->_calculatedPreferedSize = glm::vec2(
+                // width
+                std::max(childrenSum.x, props.preferedSize.x) // must at least fit children
+                    + props.padding.x + props.padding.z       // sum of padding along X
+                ,
+                // height
+                std::max(childrenSum.y, props.preferedSize.y) // must at least fit children
+                    + props.padding.y + props.padding.w       // sum of padding along Y
+            );
+            return instance->_calculatedPreferedSize;
+#undef props
+        }
+        case vertical: {
+#define props instance->layoutProperties.vertical
+            // get the sum of its children
+            glm::vec2 childrenSum{0, 0};
+            ent->forEachChild([&childrenSum, spacing = props.elementsSpacing](entity *child) {
+                const auto childSize = recursivelyUpdateLayoutPreferedSizes_(child);
+                childrenSum.y += childSize.y + spacing;
+                childrenSum.x = std::max(childSize.x, childrenSum.x);
+            });
+            // remove extra spacing (5 children will need 4 spacing)
+            childrenSum.y -= childrenSum.y <= 0 ? 0 : props.elementsSpacing;
+            // find final size
+            instance->_calculatedPreferedSize = glm::vec2(
+                // width
+                std::max(childrenSum.x, props.preferedSize.x) // must at least fit children
+                    + props.padding.x + props.padding.z       // sum of padding along X
+                ,
+                // height
+                std::max(childrenSum.y, props.preferedSize.y) // must at least fit children
+                    + props.padding.y + props.padding.w       // sum of padding along Y
+            );
+            return instance->_calculatedPreferedSize;
+#undef props
+        }
+        }
+    }
+    return {0, 0};
+}
+
+inline void uiTransform::recursivelyUpdateLayoutsPreferedSizesByFill_(const entity *ent)
+{
+    if (uiTransform *instance = ent->getComponent<uiTransform>())
+    {
+        struct weightedChild final
+        {
+            uiTransform *instance;
+            const float weight;
+        };
+        // pooled vectors for later use
+        static quickVector<weightedChild> s_weightedChildren;
+        s_weightedChildren.clear();
+        static quickVector<uiTransform *> s_nonOverflownChildren;
+        s_nonOverflownChildren.clear();
+
+        switch (instance->layout)
+        {
+        case none:
+            // do nothing
+            break;
+        case horizontal: {
+            float freeSpace = instance->_calculatedPreferedSize.x;
+            float totalWeight = 0;
+            ent->forEachChild([&freeSpace](entity *child) {
+                if (uiTransform *transformChild = child->getComponent<uiTransform>())
+                {
+                    const auto weight = transformChild->getWeightX();
+                    if (weight > 0)
+                        s_weightedChildren.push_back({transformChild, weight});
+                    else
+                        freeSpace -= transformChild->_calculatedPreferedSize.x;
+                }
+            });
+            // divide free space to weighted childrn (first pass | add to their size even if overflown)
+            float weightUnit = totalWeight > 0 ? freeSpace / totalWeight : 0;
+            s_weightedChildren.forEach([&freeSpace, weightUnit](const weightedChild child) {
+                const auto share = weightUnit * child.weight; // share of this item from the free space
+                if (child.instance->_calculatedPreferedSize.x < share)
+                {
+                    child.instance->_calculatedPreferedSize.x = share;
+                    freeSpace -= share;
+                    s_nonOverflownChildren.push_back(child.instance);
+                }
+                else
+                    // overflowed its share
+                    freeSpace -= child.instance->_calculatedPreferedSize.x;
+            });
+            if (freeSpace < 0)
+                // second pass | remove overflowed space from non-overflown items
+                s_nonOverflownChildren.forEach([removing = -freeSpace / s_nonOverflownChildren.size()](uiTransform *child) {
+                    child->_calculatedPreferedSize.x -= removing;
+                });
+            break;
+        }
+        case vertical: {
+            float freeSpace = instance->_calculatedPreferedSize.y;
+            float totalWeight = 0;
+            ent->forEachChild([&freeSpace](entity *child) {
+                if (uiTransform *transformChild = child->getComponent<uiTransform>())
+                {
+                    const auto weight = transformChild->getWeightY();
+                    if (weight > 0)
+                        s_weightedChildren.push_back({transformChild, weight});
+                    else
+                        freeSpace -= transformChild->_calculatedPreferedSize.y;
+                }
+            });
+            // divide free space to weighted childrn (first pass | add to their size even if overflown)
+            float weightUnit = totalWeight > 0 ? freeSpace / totalWeight : 0;
+            s_weightedChildren.forEach([&freeSpace, weightUnit](const weightedChild child) {
+                const auto share = weightUnit * child.weight; // share of this item from the free space
+                if (child.instance->_calculatedPreferedSize.y < share)
+                {
+                    child.instance->_calculatedPreferedSize.y = share;
+                    freeSpace -= share;
+                    s_nonOverflownChildren.push_back(child.instance);
+                }
+                else
+                    // overflowed its share
+                    freeSpace -= child.instance->_calculatedPreferedSize.y;
+            });
+            if (freeSpace < 0)
+                // second pass | remove overflowed space from non-overflown items
+                s_nonOverflownChildren.forEach([removing = -freeSpace / s_nonOverflownChildren.size()](uiTransform *child) {
+                    child->_calculatedPreferedSize.y -= removing;
+                });
+            break;
+        }
+        }
+    }
+    ent->forEachChild([](const entity *child) {
+        recursivelyUpdateLayoutsPreferedSizesByFill_(child);
+    });
+}
+
+inline void uiTransform::recursivelyUpdateTransforms_(const entity *ent, glm::vec2 sizeUnit, const bool skipSelf)
+{
+    canvas *canvasInstance = ent->getComponent<canvas>();
+    if (canvasInstance)
+        sizeUnit = canvasInstance->_unit;
+    if (uiTransform *instance = ent->getComponent<uiTransform>())
+    {
+        switch (instance->layout)
+        {
+        case none:
+            break;
+        case horizontal: {
+            if (!skipSelf)
+                instance->deltaSize = instance->_calculatedPreferedSize;
+            const auto totalSize = instance->_calculatedPreferedSize;
+            auto point = instance->layoutProperties.horizontal.startFromEnd ? totalSize : glm::vec2{0, 0};
+            ent->forEachChild([totalSize, &point](const entity *child) {
+                if (uiTransform *childTransform = child->getComponent<uiTransform>())
+                {
+                    childTransform->minAnchor = {point.x / totalSize.x,
+                                                 point.y / totalSize.y};
+                    childTransform->maxAnchor = childTransform->minAnchor + childTransform->_calculatedPreferedSize / totalSize;
+                }
+            });
+            break;
+        }
+        case vertical: {
+            if (!skipSelf)
+                instance->deltaSize = instance->_calculatedPreferedSize;
+            const auto totalSize = instance->_calculatedPreferedSize;
+            auto point = instance->layoutProperties.vertical.startFromEnd ? totalSize : glm::vec2{0, 0};
+            ent->forEachChild([totalSize, &point](const entity *child) {
+                if (uiTransform *childTransform = child->getComponent<uiTransform>())
+                {
+                    childTransform->minAnchor = {point.x / totalSize.x,
+                                                 point.y / totalSize.y};
+                    childTransform->maxAnchor = childTransform->minAnchor + childTransform->_calculatedPreferedSize / totalSize;
+                }
+            });
+            if (!skipSelf)
+                instance->deltaSize = instance->_calculatedPreferedSize;
+            break;
+        }
+        }
+    }
+    ent->forEachChild([](const entity *child) {
+        recursivelyUpdateLayoutsPreferedSizesByFill_(child);
     });
 }
 

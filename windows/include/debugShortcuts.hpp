@@ -152,7 +152,5 @@ static inline void tick_()
 
 static inline void initializeDebugShortcuts()
 {
-    engine::application::hooksMutex.lock();
     engine::application::preComponentHooks.push_back(tick_);
-    engine::application::hooksMutex.unlock();
 }

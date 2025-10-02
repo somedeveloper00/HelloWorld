@@ -145,7 +145,6 @@ struct renderTriangle : public component
 
             static std::vector<InstanceData> s_instanceDataList{};
 
-            application::hooksMutex.lock();
             application::postComponentHooks.push_back([]() {
                 bench("update triangles");
                 auto *ptr = s_instances.data();
@@ -162,7 +161,6 @@ struct renderTriangle : public component
                     transformRef.markDirty();
                 }
             });
-            application::hooksMutex.unlock();
 
             graphics::opengl::addRendererHook(0, []() {
                 bench("drawing render triangles");

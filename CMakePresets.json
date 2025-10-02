@@ -30,7 +30,7 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_CXX_FLAGS_DEBUG": "/fp:fast /DDEBUG /DTRACY_ENABLE"
+                "CMAKE_CXX_FLAGS_DEBUG": "/openmp:experimental /fp:fast /DDEBUG /DTRACY_ENABLE"
             }
         },
         {
@@ -39,8 +39,8 @@
             "inherits": "x64-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS_RELEASE": "/fp:fast /O2 /Zi",
-                "CMAKE_CXX_FLAGS_RELEASE": "/fp:fast /O2 /Zi /DINTEL_NO_ITTNOTIFY_API /DDEPLOY"
+                "CMAKE_C_FLAGS_RELEASE": "/openmp:experimental /fp:fast /O2 /Zi",
+                "CMAKE_CXX_FLAGS_RELEASE": "/openmp:experimental /fp:fast /O2 /Zi /DINTEL_NO_ITTNOTIFY_API /DDEPLOY"
             }
         },
         {
@@ -49,8 +49,8 @@
             "inherits": "x64-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS_RELEASE": "/fp:fast /Ob3 /O2 /Zi",
-                "CMAKE_CXX_FLAGS_RELEASE": "/fp:fast /Ob3 /O2 /Zi /DTRACY_ENABLE",
+                "CMAKE_C_FLAGS_RELEASE": "/openmp:experimental /fp:fast /Ob3 /O2 /Zi",
+                "CMAKE_CXX_FLAGS_RELEASE": "/openmp:experimental /fp:fast /Ob3 /O2 /Zi /DTRACY_ENABLE",
                 "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
                 "CMAKE_SHARED_LINKER_FLAGS": "/DEBUG"
             }
@@ -65,7 +65,7 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_CXX_FLAGS_DEBUG": "/fp:fast /DDEBUG /DTRACY_ENABLE"
+                "CMAKE_CXX_FLAGS_DEBUG": "/openmp:experimental /fp:fast /DDEBUG /DTRACY_ENABLE"
             }
         },
         {
@@ -76,8 +76,8 @@
             "inherits": "x86-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS_RELEASE": "/fp:fast /Ob3 /O2 /Zi",
-                "CMAKE_CXX_FLAGS_RELEASE": "/fp:fast /Ob3 /O2 /Zi /DINTEL_NO_ITTNOTIFY_API /DDEPLOY"
+                "CMAKE_C_FLAGS_RELEASE": "/openmp:experimental /fp:fast /Ob3 /O2 /Zi",
+                "CMAKE_CXX_FLAGS_RELEASE": "/openmp:experimental /fp:fast /Ob3 /O2 /Zi /DINTEL_NO_ITTNOTIFY_API /DDEPLOY"
             }
         },
         {
@@ -86,8 +86,8 @@
             "inherits": "x86-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS_RELEASE": "/fp:fast /Ob3 /O2 /Zi",
-                "CMAKE_CXX_FLAGS_RELEASE": "/fp:fast /Ob3 /O2 /Zi /DTRACY_ENABLE",
+                "CMAKE_C_FLAGS_RELEASE": "/openmp:experimental /fp:fast /Ob3 /O2 /Zi",
+                "CMAKE_CXX_FLAGS_RELEASE": "/openmp:experimental /fp:fast /Ob3 /O2 /Zi /DTRACY_ENABLE",
                 "CMAKE_EXE_LINKER_FLAGS": "/DEBUG",
                 "CMAKE_SHARED_LINKER_FLAGS": "/DEBUG"
             }

@@ -232,7 +232,7 @@ struct quickVector
         assertRange_(index);
         for (size_t i = _size; i-- > index + 1;)
             new (&_data[i]) T(std::move(_data[i - 1]));
-        _data[index] = std::forward<Value>(item);
+        new (&_data[index]) T(std::move(item));
     }
 
     template <typename... Args>
@@ -293,11 +293,11 @@ struct quickVector
     void forEach(Func &&func) const
     {
         if constexpr (DebugChecks)
-            const_cast<quickVector*>(this)->_duringForEach.value = true;
+            const_cast<quickVector *>(this)->_duringForEach.value = true;
         for (size_t i = 0; i < _size; ++i)
             func(static_cast<const T &>(_data[i]));
         if constexpr (DebugChecks)
-            const_cast<quickVector*>(this)->_duringForEach.value = false;
+            const_cast<quickVector *>(this)->_duringForEach.value = false;
     }
 
     template <typename Func>
@@ -362,12 +362,12 @@ struct quickVector
     void forEachIndexedParallel(Func &&func) const
     {
         if constexpr (DebugChecks)
-            const_cast<quickVector*>(this)->_duringForEach.value = true;
+            const_cast<quickVector *>(this)->_duringForEach.value = true;
 #pragma omp parallel for
         for (signed long long i = 0; i < _size; ++i)
             func(i, static_cast<const T &>(_data[i]));
         if constexpr (DebugChecks)
-            const_cast<quickVector*>(this)->_duringForEach.value = false;
+            const_cast<quickVector *>(this)->_duringForEach.value = false;
     }
 
     void erase(const T &item)

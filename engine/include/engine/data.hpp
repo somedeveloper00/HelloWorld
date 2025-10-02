@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cmath>
 #include <format>
 #include <ostream>
 #include <string>
@@ -28,6 +29,22 @@ struct color final
     operator std::string() const
     {
         return std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " " + std::to_string(a);
+    }
+
+    // lerps fast with SIMD and FMA
+    void lerp(const color other, const float t) noexcept
+    {
+#pragma omp simd
+        for (size_t i = 0; i < 4; i++)
+            (&r)[i] = fma((&other.r)[i], t, fma(-t, (&r)[i], (&r)[i]));
+    }
+
+    // lerps fast with SIMD and FMA
+    static inline color lerp(const color a, const color b, const float t) noexcept
+    {
+        color c = a;
+        c.lerp(b, t);
+        return c;
     }
 };
 

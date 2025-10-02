@@ -1,4 +1,6 @@
 #pragma once
+#ifndef GAMEENGINE_WINDOWS_H
+#define GAMEENGINE_WINDOWS_H
 
 // clang-format off
 #include <glad/gl.h>
@@ -10,7 +12,6 @@
 #include "data.hpp"
 #include "engine/benchmark.hpp"
 #include "engine/quickVector.hpp"
-#include "engine/window.hpp"
 #include "errorHandling.hpp"
 #include "glm/fwd.hpp"
 #include "log.hpp"
@@ -152,7 +153,6 @@ struct input final
                 s_upKeys.push_back(key);
             }
         });
-        application::hooksMutex.lock();
         application::preComponentHooks.push_back([window]() {
             for (auto key : s_downKeys)
                 if (s_states[key] == state::up)
@@ -170,7 +170,6 @@ struct input final
             glfwGetCursorPos(window, &x, &y);
             updateCursorPos(x, y);
         });
-        application::hooksMutex.unlock();
     }
 
     static inline int engineKeyToGlfwKey_(const key key)
@@ -669,6 +668,7 @@ struct graphics final
         fatalAssert(glfwInit() == GLFW_TRUE, "glfwInit() failed");
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+        glfwWindowHint(GLFW_SAMPLES, 2);
 #if DEBUG
         glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
 #endif
@@ -683,7 +683,6 @@ struct graphics final
         if (s_renderer == renderer::opengl)
             opengl::initialize_();
 
-        application::hooksMutex.lock();
         application::onExitHooks.push_back([]() {
             glfwTerminate();
         });
@@ -692,7 +691,6 @@ struct graphics final
             if (glfwWindowShouldClose(s_window))
                 application::close();
         });
-        application::hooksMutex.unlock();
     }
 
     static inline renderer getRenderer() noexcept
@@ -966,9 +964,7 @@ struct graphics final
                 tick_();
             });
 
-            application::hooksMutex.lock();
             application::postComponentHooks.push_back(tick_);
-            application::hooksMutex.unlock();
         }
 
         static inline void tick_()
@@ -980,7 +976,9 @@ struct graphics final
             // execute a copy of onRenders
             onRendersMutex.lock();
             onRenders.forEach([](const quickVector<std::function<void()>> &funcs) {
-                funcs.forEach([](const auto &func) { func(); });
+                funcs.forEach([](const auto &func) {
+                    func();
+                });
             });
             onRendersMutex.unlock();
             glfwSwapBuffers(s_window);
@@ -998,8 +996,6 @@ struct graphics final
     static inline float s_dpi;
 };
 
-#ifndef GAMEENGINE_WINDOWS_H
-#define GAMEENGINE_WINDOWS_H
 inline input::state operator|(input::state a, input::state b) noexcept
 {
     using underlying = std::underlying_type_t<input::state>;
@@ -1027,5 +1023,5 @@ inline glm::ivec2 input::getMousePositionCentered() noexcept
 {
     return {s_mousePos.x - graphics::getFrameBufferSize().x / 2, -s_mousePos.y + graphics::getFrameBufferSize().y / 2};
 }
-#endif
 } // namespace engine
+#endif

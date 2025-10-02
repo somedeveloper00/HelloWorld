@@ -9,6 +9,8 @@
 #include "glm/fwd.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include <chrono>
+#include <gl/gl.h>
+#include <intrin.h>
 #include <string>
 #include <thread>
 
@@ -69,7 +71,6 @@ struct pointerRead : public component
 
     void enabled_() override
     {
-        log::logInfo("{} enabled", getEntity()->name);
         // add to hashes
         _id = s_hashesCount++;
         s_hashes[_id] = entry{.model = _transform->getGlobalMatrix(), .instance = this};
@@ -77,7 +78,6 @@ struct pointerRead : public component
 
     void disabled_() override
     {
-        log::logInfo("{} disabled", getEntity()->name);
         // remove from hashes
         s_hashes[_id] = std::move(s_hashes[--s_hashesCount]);
         if (_id != s_hashesCount)
@@ -151,7 +151,6 @@ struct pointerRead : public component
             static GLint s_hashLocation = glGetUniformLocation(s_program, "hash");
             fatalAssert(s_hashLocation != -1, "could not find \"hash\" uniform variable.");
 
-            application::hooksMutex.lock();
             application::preComponentHooks.push_back([]() {
                 frameBufferDebug_();
                 bench("update screen object hashes");
@@ -175,21 +174,33 @@ struct pointerRead : public component
                             glUniform1ui(s_hashLocation, static_cast<GLuint>(i + 1)); // 0 is clear color
                             glDrawElements(GL_TRIANGLES, s_hashes[i].verticesCount, GL_UNSIGNED_INT, 0);
                         }
-                    glUseProgram(0);
-                    glBindVertexArray(0);
 
                     // readback
                     glPixelStorei(GL_PACK_ALIGNMENT, 1); // avoid "row packing" issue
+                    glReadBuffer(GL_COLOR_ATTACHMENT0);
+                    glFlush();
                     glReadPixels(0, 0, s_screenHashesSizes.x, s_screenHashesSizes.y, GL_RED_INTEGER, GL_UNSIGNED_SHORT, s_screenHashes);
-                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glUseProgram(0);
+                    glBindVertexArray(0);
 
                     // update objects
                     auto mousePos = input::getMousePosition();
-                    const auto ind = (graphics::getFrameBufferSize().y - mousePos.y) * s_screenHashesSizes.x + mousePos.x;
+                    fatalAssert(mousePos.x >= 0 && mousePos.y >= 0 && mousePos.x < graphics::getFrameBufferSize().x && mousePos.y < graphics::getFrameBufferSize().y, "mouse position outside of window");
+                    const auto ind =
+                        (graphics::getFrameBufferSize().y - mousePos.y - 1) // -1 to avoid false readPixels on the top-most row pixels
+                            * s_screenHashesSizes.x +
+                        mousePos.x;
                     const hashType newPointedId = s_screenHashes[ind] - 1;
                     if (newPointedId == s_lastPointedId)
                         return;
+                    if (newPointedId >= s_hashesCount)
+                    {
+                        drawDebugFrameBuffer();
+                        fatalAssert(false, "invalid hash read");
+                    }
                     // call onPointerExit
                     if (s_lastPointedId != hashTypeMax)
                     {
@@ -215,7 +226,6 @@ struct pointerRead : public component
                     s_lastPointedId = hashTypeMax;
                 }
             });
-            application::hooksMutex.unlock();
         }
     }
 
@@ -271,9 +281,16 @@ struct pointerRead : public component
     {
         if (input::isKeyJustDown(input::key::k))
         {
-            graphics::opengl::debugModeContext _;
+            drawDebugFrameBuffer();
+            std::this_thread::sleep_for(std::chrono::duration<float>(1));
+        }
+    }
 
-            constexpr auto vertexShader = R"(
+    static inline void drawDebugFrameBuffer()
+    {
+        graphics::opengl::debugModeContext _;
+
+        constexpr auto vertexShader = R"(
             #version 460 core
             const vec2 verts[3] = vec2[3](
                 vec2(-1.0, -1.0),
@@ -285,7 +302,7 @@ struct pointerRead : public component
                 gl_Position = vec4(verts[gl_VertexID], 0.0, 1.0);
             }
             )";
-            constexpr auto fragmentShader = R"(
+        constexpr auto fragmentShader = R"(
             #version 460 core
             layout(binding = 0) uniform usampler2D uTex;
             out vec4 FragColor;
@@ -319,30 +336,32 @@ struct pointerRead : public component
             }
             )";
 
-            static auto s_program = graphics::opengl::createProgram(vertexShader, fragmentShader);
-            fatalAssert(s_program, "could not create opengl program for pointerRead component's debug");
-            static auto texLocation = glGetUniformLocation(s_program, "tex");
+        static auto s_program = graphics::opengl::createProgram(vertexShader, fragmentShader);
+        fatalAssert(s_program, "could not create opengl program for pointerRead component's debug");
+        static auto texLocation = glGetUniformLocation(s_program, "tex");
 
-            static GLuint vao = 0;
-            if (vao == 0)
-                glGenVertexArrays(1, &vao);
+        static GLuint vao = 0;
+        if (vao == 0)
+            glGenVertexArrays(1, &vao);
 
-            graphics::opengl::noDepthTestContext __;
-            glUseProgram(s_program);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, s_texture);
-            glUniform1i(texLocation, 0);
+        graphics::opengl::noDepthTestContext __;
+        glUseProgram(s_program);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, s_texture);
+        glUniform1i(texLocation, 0);
 
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
 
-            glfwSwapBuffers(glfwGetCurrentContext());
+        glfwSwapBuffers(glfwGetCurrentContext());
 
-            glBindVertexArray(0);
-            glUseProgram(0);
-
-            std::this_thread::sleep_for(std::chrono::duration<float>(1));
-        }
+        glBindVertexArray(0);
+        glUseProgram(0);
     }
 };
+
+#ifndef GAMEENGINE_POINTERREAD_H
+#define GAMEENGINE_POINTERREAD_H
+#endif
+
 } // namespace engine
