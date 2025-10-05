@@ -1,7 +1,7 @@
-#include "common/typeInfo.hpp"
+#pragma once
+
 #include "engine/app.hpp"
 #include "engine/components/transform.hpp"
-#include "engine/ref.hpp"
 
 // animates transform constantly
 struct animateTransform : public engine::component

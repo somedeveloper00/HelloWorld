@@ -12,11 +12,16 @@ struct pointerDebug : public engine::ui::uiSelectable
     createTypeInformation(pointerDebug, engine::ui::uiSelectable);
 
   protected:
-    void created_() override
+    bool created_() override
     {
-        getEntity()->ensureComponentExists<engine::ui::uiImage>()->pushLock();
-        engine::ui::uiSelectable::created_();
+        if (!engine::ui::uiSelectable::created_())
+            return false;
+        const auto image = getEntity()->ensureComponentExists<engine::ui::uiImage>();
+        if (!image)
+            return false;
+        image->pushLock();
         _pointerRead->setVertices(engine::graphics::opengl::getSquareVao(), 6);
+        return true;
     }
 
     void removed_() override

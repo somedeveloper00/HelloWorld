@@ -47,13 +47,16 @@ struct uiSelectable : public component
     pointerRead *_pointerRead;
     uiTransform *_uiTransform;
 
-    void created_() override
+    bool created_() override
     {
+        initialize_();
         disallowMultipleComponents(uiSelectable);
         _uiSelectableWeakRef = getWeakRefAs<uiSelectable>();
-        _uiTransform = getEntity()->ensureComponentExists<uiTransform>();
+        if (!(_uiTransform = getEntity()->ensureComponentExists<uiTransform>()))
+            return false;
+        if (!(_pointerRead = getEntity()->ensureComponentExists<pointerRead>()))
+            return false;
         _uiTransform->pushLock();
-        _pointerRead = getEntity()->ensureComponentExists<pointerRead>();
         _pointerRead->pushLock();
         _pointerRead->onPointerEnter.push_back(_onPointerEnterLambda = [this]() {
             _isHovered = true;
@@ -65,7 +68,7 @@ struct uiSelectable : public component
             onPointerExit();
             s_hovered = {};
         });
-        initialize_();
+        return true;
     }
 
     void removed_() override

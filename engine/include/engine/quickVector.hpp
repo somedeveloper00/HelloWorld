@@ -209,10 +209,9 @@ struct quickVector
     void pop_back()
     {
         assertDuringForEach();
-        assertRange_(1);
+        assertRange_(0);
         destructItem_(_data[_size - 1]);
-        if (_size > 0)
-            _size--;
+        _size--;
     }
 
     void reserve(const size_t capacity)
@@ -268,11 +267,13 @@ struct quickVector
         _size = 0;
     }
 
+    // will be invalid if there's no items 
     T &back()
     {
         return _data[_size - 1];
     }
 
+    // will be invalid if there's no items
     const T &back() const
     {
         return _data[_size - 1];

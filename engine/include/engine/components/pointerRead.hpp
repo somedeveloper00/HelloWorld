@@ -1,18 +1,13 @@
 #pragma once
 
 #include "GLFW/glfw3.h"
-#include "common/componentUtils.hpp"
+#include "common/typeInfo.hpp"
 #include "engine/app.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/errorHandling.hpp"
 #include "engine/window.hpp"
 #include "glm/fwd.hpp"
-#include "glm/gtc/type_ptr.hpp"
-#include <chrono>
-#include <gl/gl.h>
 #include <intrin.h>
-#include <string>
-#include <thread>
 
 namespace engine
 {
@@ -50,18 +45,19 @@ struct pointerRead : public component
   protected:
     transform *_transform;
 
-    void created_() override
+    bool created_() override
     {
         initialize_();
         disallowMultipleComponents(pointerRead);
         if (s_hashesCount == hashTypeMax)
         {
             log::logError("Removed the new component \"{}\" of entity \"{}\". Cannot have more than {} instances of this component.", getTypeName(), getEntity()->name, hashTypeMax);
-            remove();
-            return;
+            return false;
         }
-        _transform = getEntity()->ensureComponentExists<transform>();
+        if (!(_transform = getEntity()->ensureComponentExists<transform>()))
+            return false;
         _transform->pushLock();
+        return true;
     }
 
     void removed_() override
@@ -152,10 +148,10 @@ struct pointerRead : public component
             fatalAssert(s_hashLocation != -1, "could not find \"hash\" uniform variable.");
 
             application::preComponentHooks.push_back([]() {
-                frameBufferDebug_();
                 bench("update screen object hashes");
                 if (input::isMouseInWindow())
                 {
+                    frameBufferDebug_();
                     // update data
                     for (size_t i = 0; i < s_hashesCount; i++)
                         s_hashes[i].model = s_hashes[i].instance->_transform->getGlobalMatrix();
@@ -176,11 +172,8 @@ struct pointerRead : public component
                         }
 
                     // readback
-                    glPixelStorei(GL_PACK_ALIGNMENT, 1); // avoid "row packing" issue
-                    glReadBuffer(GL_COLOR_ATTACHMENT0);
-                    glFlush();
+                    glReadBuffer(GL_COLOR_ATTACHMENT0); // read s_texture
                     glReadPixels(0, 0, s_screenHashesSizes.x, s_screenHashesSizes.y, GL_RED_INTEGER, GL_UNSIGNED_SHORT, s_screenHashes);
-                    glPixelStorei(GL_PACK_ALIGNMENT, 4);
 
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     glUseProgram(0);
@@ -193,13 +186,14 @@ struct pointerRead : public component
                         (graphics::getFrameBufferSize().y - mousePos.y - 1) // -1 to avoid false readPixels on the top-most row pixels
                             * s_screenHashesSizes.x +
                         mousePos.x;
-                    const hashType newPointedId = s_screenHashes[ind] - 1;
+                    const hashType newPointedId = s_screenHashes[ind] - static_cast<hashType>(1); // -1 because 0 is clear color
+                    const hashType newPointdRaw = s_screenHashes[ind];
                     if (newPointedId == s_lastPointedId)
                         return;
-                    if (newPointedId >= s_hashesCount)
+                    if (newPointdRaw > s_hashesCount)
                     {
                         drawDebugFrameBuffer();
-                        fatalAssert(false, "invalid hash read");
+                        fatalAssert(false, ("invalid hash read: " + std::to_string(newPointedId)).c_str());
                     }
                     // call onPointerExit
                     if (s_lastPointedId != hashTypeMax)
@@ -257,8 +251,6 @@ struct pointerRead : public component
                 glGenFramebuffers(1, &s_frameBuffer);
             glBindFramebuffer(GL_FRAMEBUFFER, s_frameBuffer);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_texture, 0);
-            GLenum db[] = {GL_COLOR_ATTACHMENT0};
-            glDrawBuffers(1, db);
 
             // depth buffer
             static GLuint s_depth = 0;
@@ -267,6 +259,8 @@ struct pointerRead : public component
             glBindRenderbuffer(GL_RENDERBUFFER, s_depth);
             glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, s_screenHashesSizes.x, s_screenHashesSizes.y);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_depth);
+
+            fatalAssert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "could not create framebuffer for pointerRead component");
 
             // unbind
             glBindFramebuffer(GL_FRAMEBUFFER, 0);

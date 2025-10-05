@@ -6,7 +6,6 @@
 #include "engine/window.hpp"
 #include "glm/ext/quaternion_transform.hpp"
 #include <glm/gtc/type_ptr.hpp>
-#include <mutex>
 
 namespace engine::test
 {
@@ -18,9 +17,9 @@ struct renderTriangle : public component
     float swaySpeed = 1;
 
   private:
-    static inline auto &s_instances = *new quickVector<weakRef<renderTriangle>>();
+    static inline auto &s_instances = *new quickVector<renderTriangle *>();
     float _startTime;
-    weakRef<transform> _transform;
+    transform *_transform;
 
     static inline void initialize_()
     {
@@ -106,7 +105,7 @@ struct renderTriangle : public component
                 return;
             }
 
-            static auto s_matrixLocation = glGetUniformLocation(s_shaderProgram, "matrix");
+            static auto s_matrixLocation = graphics::opengl::fatalGetLocation(s_shaderProgram, "matrix");
 
             // set up triangle vertices
             GLfloat vertices[] = {
@@ -191,18 +190,20 @@ struct renderTriangle : public component
         }
     }
 
-    void created_() override
+    bool created_() override
     {
         initialize_();
-        s_instances.push_back(getWeakRefAs<renderTriangle>());
-        _startTime = time::getTotalTime();
-        _transform = getEntity()->ensureComponentExists<transform>();
+        if (!(_transform = getEntity()->ensureComponentExists<transform>()))
+            return false;
         _transform->pushLock();
+        s_instances.push_back(this);
+        _startTime = time::getTotalTime();
+        return true;
     }
 
     void removed_() override
     {
-        s_instances.erase(getWeakRefAs<renderTriangle>());
+        s_instances.erase(this);
         _transform->popLock();
     }
 };

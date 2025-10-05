@@ -11,7 +11,6 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <tracy/Tracy.hpp>
@@ -46,7 +45,7 @@ struct component
     }
     template <typename T>
         requires std::is_base_of_v<component, T>
-    weakRef<T> getWeakRefAs()
+    weakRef<T> getWeakRefAs() const
     {
         return *_selfRef.as<T>();
     }
@@ -75,8 +74,12 @@ struct component
     }
 
   protected:
-    // gets called after creation as soon as all the base local variables are initialized and after the constructor
-    virtual void created_() {};
+    // gets called after creation as soon as all the base local variables are initialized and after the constructor.
+    // returns whether this component should stay (if false, it'll be removed immediately without calling any other APIs in this component)
+    virtual bool created_()
+    {
+        return true;
+    }
 
     // gets called every tick
     virtual void update_() {};
@@ -259,7 +262,7 @@ struct entity
         _parent = parent;
     }
 
-    // gets or adds the requested component
+    // gets or adds the requested component. may return nullptr if can't add the component
     template <typename T, typename... Args>
         requires std::is_base_of_v<component, T> && std::is_constructible_v<T, Args...>
     weakRef<T> ensureComponentExists(Args &&...args)
@@ -270,6 +273,7 @@ struct entity
         return addComponent<T>(args...);
     }
 
+    // tries to add a new component. returns nullptr if failed
     template <typename T, typename... Args>
         requires std::is_base_of_v<component, T> && std::is_constructible_v<T, Args...>
     weakRef<T> addComponent(Args &&...args)
@@ -281,9 +285,12 @@ struct entity
         newComponent->_entity = _selfRef;
         newComponent->_selfRef = newComponent;
         _newComponents.emplace_back(newComponent);
-        newComponent->created_();
+        if (!newComponent->created_())
+        {
+            _newComponents.pop_back();
+            return {};
+        }
         newComponent->enabled_();
-
         return newComponentAsT;
     }
 
@@ -523,6 +530,14 @@ struct application
     // hooks to execute after the application is closed
     static inline auto &onExitHooks = *new quickVector<std::function<void()>>();
 
+// executes a copy of the hooks' vector
+#define executeHooks(hooks)                             \
+    {                                                   \
+        bench("hooks");                                 \
+        const auto copy = hooks;                        \
+        copy.forEach([](const auto &func) { func(); }); \
+    }
+
     static inline void run()
     {
         TracyPlotConfig(s_tracyEntityCountName, tracy::PlotFormatType::Number, false, false, tracy::Color::AliceBlue);
@@ -538,14 +553,7 @@ struct application
             time::_totalFrames++;
             lastFrameTime = currentFrameTime;
 
-            auto preComponentHooksCopy = preComponentHooks;
-            auto postComponentHooksCopy = postComponentHooks;
-            auto onExitHooksCopy = onExitHooks;
-            auto postLoopExecutesCopy = _postLoopExecutes;
-            _postLoopExecutes.clear();
-
-            preComponentHooksCopy.forEach([](const auto &func) { func(); });
-
+            executeHooks(preComponentHooks);
             {
                 bench("handling entities");
                 {
@@ -584,14 +592,8 @@ struct application
             }
             TracyPlot(s_tracyEntityCountName, static_cast<long long>(entity::getEntitiesCount()));
 
-            {
-                bench("postComponentHooks");
-                postComponentHooksCopy.forEach([](const auto &func) { func(); });
-            }
-            {
-                bench("_postLoopExecutes");
-                postLoopExecutesCopy.forEach([](const auto &func) { func(); });
-            }
+            executeHooks(postComponentHooks);
+            executeHooks(_postLoopExecutes);
             {
                 bench("sleep");
                 // frame-rate consistency
@@ -606,11 +608,7 @@ struct application
             FrameMark;
         }
 
-        {
-            bench("onExitHooks");
-            auto onExitHooksCopy = onExitHooks;
-            onExitHooksCopy.forEach([](const auto &func) { func(); });
-        }
+        executeHooks(onExitHooks);
     }
 
     // thread-safe. exists the application after the current frame is finished

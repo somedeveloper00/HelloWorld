@@ -2,7 +2,6 @@
 
 #include "common/componentUtils.hpp"
 #include "engine/app.hpp"
-#include "engine/window.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -29,6 +28,11 @@ struct transform : public component
         return rotation * glm::vec3(0.f, 1.f, 0.f);
     }
 
+    glm::vec3 getRight() const
+    {
+        return rotation * glm::vec3(1.f, 0.f, 0.f);
+    }
+
     glm::mat4 getGlobalMatrix() const noexcept
     {
         return _modelGlobalMatrix;
@@ -41,18 +45,18 @@ struct transform : public component
 
     virtual void markDirty() noexcept
     {
-        _dirty = true;
+        _isDirty = true;
     }
 
     const bool isDirty() const noexcept
     {
-        return _dirty;
+        return _isDirty;
     }
 
   protected:
     glm::mat4 _modelMatrix;
     glm::mat4 _modelGlobalMatrix;
-    bool _dirty = true;
+    bool _isDirty = true;
 
     // set this to false to override matrix multiplication
     const bool _overrideMatrixCalculation = false;
@@ -82,14 +86,14 @@ struct transform : public component
         if ((ptr = ent->getComponent<transform>()) && !ptr->_overrideMatrixCalculation)
         {
             transform &transformRef = *ptr;
-            if (transformRef._dirty)
+            if (transformRef._isDirty)
             {
                 const auto scaleMatrix = glm::scale(glm::mat4(1), transformRef.scale);
                 const auto rotationMatrix = glm::mat4_cast(transformRef.rotation);
                 const auto translateMatrix = glm::translate(glm::mat4(1), transformRef.position);
                 transformRef._modelMatrix = translateMatrix * rotationMatrix * scaleMatrix;
                 transformRef._modelGlobalMatrix = parentModelGlobalMatrix = parentModelGlobalMatrix * transformRef._modelMatrix;
-                transformRef._dirty = false;
+                transformRef._isDirty = false;
                 parentDirty = true;
             }
             else if (parentDirty)
@@ -100,10 +104,11 @@ struct transform : public component
         });
     }
 
-    void created_() override
+    bool created_() override
     {
         initialize_();
         disallowMultipleComponents(transform);
+        return true;
     }
 };
 } // namespace engine

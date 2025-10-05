@@ -40,6 +40,20 @@ struct formatter<glm::vec4>
     }
 };
 template <>
+struct formatter<glm::quat>
+{
+    constexpr auto parse(std::format_parse_context &ctx)
+    {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const glm::quat &c, FormatContext &ctx) const
+    {
+        return std::format_to(ctx.out(), "[{}, {}, {}, {}]", c.x, c.y, c.z, c.w);
+    }
+};
+template <>
 struct formatter<glm::vec3>
 {
     constexpr auto parse(std::format_parse_context &ctx)

@@ -704,6 +704,20 @@ struct graphics final
         return s_frameBufferSize;
     }
 
+    // sets mouse position relative to the top-right of the window
+    static inline void setMousePosition(const glm::ivec2 pos) noexcept
+    {
+        glfwSetCursorPos(s_window, pos.x, pos.y);
+        input::updateCursorPos(pos.x, pos.y);
+    }
+
+    // sets mouse position relative to the center of the window
+    static inline void setMousePositionCentered(const glm::ivec2 pos) noexcept
+    {
+        glfwSetCursorPos(s_window, s_frameBufferSize.x / 2.f + pos.x, s_frameBufferSize.y / 2.f + pos.y);
+        input::updateCursorPos(pos.x, pos.y);
+    }
+
     struct opengl final
     {
         opengl() = delete;
@@ -805,6 +819,28 @@ struct graphics final
             const bool _enabled;
         };
 
+        // disables opengl face culling during the lifetime of this object (RAII), and restores previous state afterwards
+        // by default, face culling is turned on
+        struct noFaceCullingContext
+        {
+            noFaceCullingContext()
+                : _enabled(glIsEnabled(GL_CULL_FACE))
+            {
+                glDisable(GL_CULL_FACE);
+            }
+
+            ~noFaceCullingContext()
+            {
+                if (_enabled)
+                    glEnable(GL_CULL_FACE);
+                else
+                    glDisable(GL_CULL_FACE);
+            }
+
+          private:
+            const bool _enabled;
+        };
+
         // best not to use it directly. see addRendererHook and removeRendererHook.
         // executes when rendering a frame. if you subscribe, you should also unsubscribe later.
         // order of execution is from 0 to last.
@@ -843,6 +879,14 @@ struct graphics final
                 return GL_FALSE;
             }
             return program;
+        }
+
+        static inline GLuint fatalGetLocation(const GLuint program, const std::string &name)
+        {
+            const auto r = glGetUniformLocation(program, name.c_str());
+            if (r == -1)
+                fatalAssert(false, ("could not find \"" + name + "\" uniform variable location.").c_str());
+            return r;
         }
 
         // compiles the source vertex shader and returns the shader object or 0/GL_FALSE if failed

@@ -3,6 +3,7 @@
 #include "engine/app.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/quickVector.hpp"
+#include "engine/window.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/fwd.hpp"
 #include <algorithm>
@@ -109,10 +110,11 @@ struct uiTransform final : public transform
     // used for layout calculations
     glm::vec2 _calculatedPreferedSize{0, 0};
 
-    void created_() override
+    bool created_() override
     {
-        transform::created_();
         initialize_();
+        if (!transform::created_())
+            return false;
     }
 
     float getWeightX() const noexcept
@@ -192,7 +194,7 @@ struct canvas : public component
     friend uiTransform;
 
     // increases unit scale to match screen pixels
-    bool scaleToScreenPixels = 1;
+    bool scaleToScreenPixels = true;
 
     // multiplier for scale unit
     float scaleUnitMultiplier = 1.f;
@@ -210,34 +212,26 @@ struct canvas : public component
         return startingEntity->getComponentInParent<canvas>();
     }
 
-    void created_() override
+    bool created_() override
     {
         initialize_();
+        disallowMultipleComponents(canvas);
+        if (!(_transform = getEntity()->ensureComponentExists<transform>()))
+            return false;
         s_canvases.push_back(this);
-        _transform = getEntity()->ensureComponentExists<transform>();
         _transform->pushLock();
         updateScaleUnit_();
-
-        // add hook
-        _frameBufferChangedHook = [this]() { this->updateScaleUnit_(); };
-        graphics::frameBufferSizeChanged.push_back(_frameBufferChangedHook);
+        return true;
     }
 
     void removed_() override
     {
         s_canvases.erase(this);
         _transform->popLock();
-
-        // remove hook
-        auto target = _frameBufferChangedHook.target<void (*)()>();
-        graphics::frameBufferSizeChanged.eraseIf([target](const auto &func) {
-            return func.template target<void (*)()>() == target;
-        });
     }
 
   private:
-    static inline quickVector<canvas *> s_canvases;
-    std::function<void()> _frameBufferChangedHook;
+    static inline quickVector<canvas *> s_canvases{};
     bool _dirty;
 
     static inline void initialize_()
@@ -246,6 +240,11 @@ struct canvas : public component
         application::postComponentHooks.insert(0, []() {
             s_canvases.forEach([](canvas *instance) {
                 instance->_dirty = instance->_transform->isDirty();
+            });
+        });
+        graphics::frameBufferSizeChanged.push_back([]() {
+            s_canvases.forEach([](canvas *instance) {
+                instance->updateScaleUnit_();
             });
         });
     }

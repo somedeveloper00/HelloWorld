@@ -2,6 +2,7 @@
 
 #include "engine/app.hpp"
 #include "engine/data.hpp"
+#include "engine/window.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "uiButton.hpp"
 
@@ -31,17 +32,17 @@ struct uiImageButton : public uiButton
     color _currentColor{};
     color _targetColor{};
 
-    void created_() override
+    bool created_() override
     {
-        uiButton::created_();
         initialize_();
+        if (!uiButton::created_())
+            return false;
         s_instances.push_back(this);
         if (graphics::getRenderer() == graphics::opengl)
-        {
             _pointerRead->setVertices(graphics::opengl::getSquareVao(), 6);
-        }
         _currentColor = getEnabled() ? idleColor : disabledColor;
         _targetColor = _currentColor;
+        return true;
     }
 
     void disabled_() override
@@ -122,15 +123,16 @@ struct uiImageButton : public uiButton
             )";
 
             // make program and vao/ebo ready
-            static GLuint program = graphics::opengl::createProgram(vertexShader, fragmentShader);
-            fatalAssert(program, "could not create opengl program for uiImageButton component");
-            static GLint modelMatrixLocation = glGetUniformLocation(program, "model");
-            static GLint colorLocation = glGetUniformLocation(program, "color");
+            static GLuint s_program = graphics::opengl::createProgram(vertexShader, fragmentShader);
+            fatalAssert(s_program, "could not create opengl program for uiImageButton component");
+            static GLint modelMatrixLocation = glGetUniformLocation(s_program, "model");
+            static GLint colorLocation = glGetUniformLocation(s_program, "color");
             static GLuint s_vao = graphics::opengl::getSquareVao();
 
             graphics::opengl::addRendererHook(1, []() {
                 bench("rendering uiImageButtons");
                 glBindVertexArray(s_vao);
+                glUseProgram(s_program);
                 s_instances.forEach([](const uiImageButton *instance) {
                     const auto matrix = instance->_uiTransform->getGlobalMatrix();
                     glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(matrix));

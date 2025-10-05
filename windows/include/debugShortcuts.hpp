@@ -41,8 +41,6 @@ static inline void tick_()
     static auto close = engine::input::key::escape;
     static auto fps = engine::input::key::f;
     static auto hierarchy = engine::input::key::h;
-    static auto createRandom = engine::input::key::a;
-    static auto deleteRandom = engine::input::key::d;
     static auto addTriangle = engine::input::key::t;
     static auto createRandomCount = 100;
     static auto createRandomHugeCount = 1000000;
@@ -119,27 +117,6 @@ static inline void tick_()
             nextRoot:;
             }
         }
-    }
-    else if (engine::input::isKeyHeldDown(engine::input::key::leftShift) && engine::input::isKeyJustDown(createRandom))
-    {
-        {
-            bench("add-huge");
-            createRandomEntities_(createRandomHugeCount);
-        }
-        engine::log::logInfo("created {} entities", createRandomHugeCount);
-    }
-    else if (engine::input::isKeyJustDown(createRandom))
-    {
-        {
-            bench("add");
-            createRandomEntities_(createRandomCount);
-        }
-        engine::log::logInfo("created {} entities", createRandomCount);
-    }
-    else if (engine::input::isKeyJustDown(deleteRandom))
-    {
-        bench("remove");
-        deleteRandomEntities_(deleteRandomCount);
     }
     else if (engine::input::isKeyJustDown(addTriangle))
     {
