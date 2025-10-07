@@ -12,7 +12,7 @@ struct fpsMoveAround : public engine::component
 {
     createTypeInformation(fpsMoveAround, component);
 
-    float speed = 10.f;
+    float speed = 7.f;
     float lookSpeed = 100.f;
 
   private:
@@ -21,6 +21,7 @@ struct fpsMoveAround : public engine::component
 
     void update_() override
     {
+        engine::graphics::setCursorVisibility(false);
         auto transform = getEntity()->getComponent<engine::transform>();
         if (!transform)
             return;
@@ -45,8 +46,17 @@ struct fpsMoveAround : public engine::component
         if (glm::length(mouseDelta) > 0.4f)
             return;
         transform->rotation = glm::quat(glm::vec3(
-            glm::radians(pitch += lookSpeed * mouseDelta.y),
+            glm::radians(pitch = getLockedPitch(pitch + lookSpeed * mouseDelta.y)),
             glm::radians(yaw -= lookSpeed * mouseDelta.x),
             0));
+    }
+
+    static float getLockedPitch(const float pitch) noexcept
+    {
+        if (pitch > 89.9f)
+            return 89.9f;
+        if (pitch < -89.9f)
+            return -89.9f;
+        return pitch;
     }
 };

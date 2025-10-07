@@ -8,6 +8,7 @@
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/fwd.hpp"
 #include "glm/gtc/constants.hpp"
+#include "glm/trigonometric.hpp"
 #include "transform.hpp"
 
 namespace engine
@@ -91,7 +92,7 @@ struct camera : public component
     glm::mat4 _projectionMatrix;
     glm::mat4 _viewMatrix;
     // in radians
-    float _fieldOfView = glm::half_pi<float>();
+    float _fieldOfView = glm::radians(60.f);
     float _nearPlane = 0.01f;
     float _farPlane = 100.f;
     transform *_transform;

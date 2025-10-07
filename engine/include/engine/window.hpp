@@ -718,6 +718,16 @@ struct graphics final
         input::updateCursorPos(pos.x, pos.y);
     }
 
+    static inline void setCursorVisibility(const bool visible) noexcept
+    {
+        glfwSetInputMode(s_window, GLFW_CURSOR, visible ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
+    }
+
+    static inline bool isCursorVisibility() noexcept
+    {
+        return glfwGetInputMode(s_window, GLFW_CURSOR) != GLFW_CURSOR_HIDDEN;
+    }
+
     struct opengl final
     {
         opengl() = delete;
