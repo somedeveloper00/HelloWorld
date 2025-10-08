@@ -1,10 +1,8 @@
 #pragma once
 
-#include "GLFW/glfw3.h"
-#include "common/typeInfo.hpp"
 #include "engine/app.hpp"
+#include "engine/components/camera.hpp"
 #include "engine/components/transform.hpp"
-#include "engine/errorHandling.hpp"
 #include "engine/window.hpp"
 #include "glm/fwd.hpp"
 #include <intrin.h>
@@ -30,6 +28,11 @@ struct pointerRead : public component
         GLsizei verticesCount = 0;
         glm::mat4 model{};
         pointerRead *instance = nullptr;
+
+        constexpr entry()
+            : vao(0), verticesCount(0), model(), instance(nullptr)
+        {
+        }
     };
 
   public:
@@ -38,12 +41,20 @@ struct pointerRead : public component
     // verticesCount refers to the number of vertices
     void setVertices(const GLuint vao, const GLsizei verticesCount)
     {
-        s_hashes[_id].verticesCount = verticesCount;
-        s_hashes[_id].vao = vao;
+        _verticesCount = verticesCount;
+        _vao = vao;
+        // apply immediately
+        if (getEnabled())
+        {
+            s_hashes[_id].verticesCount = verticesCount;
+            s_hashes[_id].vao = vao;
+        }
     }
 
   protected:
     transform *_transform;
+    GLuint _vao;
+    GLsizei _verticesCount;
 
     bool created_() override
     {
@@ -69,7 +80,10 @@ struct pointerRead : public component
     {
         // add to hashes
         _id = s_hashesCount++;
-        s_hashes[_id] = entry{.model = _transform->getGlobalMatrix(), .instance = this};
+        s_hashes[_id].model = _transform->getGlobalMatrix();
+        s_hashes[_id].instance = this;
+        s_hashes[_id].vao = _vao;
+        s_hashes[_id].verticesCount = _verticesCount;
     }
 
     void disabled_() override
@@ -118,13 +132,15 @@ struct pointerRead : public component
             const auto vertexShader = R"(
             #version 460 core
             layout(location = 0) in vec3 position;
-            uniform mat4 model; 
+            uniform mat4 modelMatrix; 
+            uniform mat4 viewMatrix; 
+            uniform mat4 projectionMatrix; 
             uniform uint hash;
             out uint outHash;
 
             void main()
             {
-                gl_Position = model * vec4(position, 1.f);
+                gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.f);
                 outHash = hash;
             }
             )";
@@ -140,33 +156,36 @@ struct pointerRead : public component
             )";
 
             // shader
-            static const auto s_program = graphics::opengl::createProgram(vertexShader, fragmentShader);
-            fatalAssert(s_program, "could not create opengl program for pointerRead component");
-            static GLint s_modelLocation = glGetUniformLocation(s_program, "model");
-            fatalAssert(s_modelLocation != -1, "could not find \"model\" uniform variable.");
-            static GLint s_hashLocation = glGetUniformLocation(s_program, "hash");
-            fatalAssert(s_hashLocation != -1, "could not find \"hash\" uniform variable.");
+            static const auto s_program = graphics::opengl::fatalCreateProgram("pointerRead", vertexShader, fragmentShader);
+            static GLint s_modelMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "modelMatrix");
+            static GLint s_viewMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "viewMatrix");
+            static GLint s_projectionMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "projectionMatrix");
+            static GLint s_hashLocation = graphics::opengl::fatalGetLocation(s_program, "hash");
 
             application::preComponentHooks.push_back([]() {
                 bench("update screen object hashes");
                 if (input::isMouseInWindow())
                 {
-                    frameBufferDebug_();
                     // update data
                     for (size_t i = 0; i < s_hashesCount; i++)
                         s_hashes[i].model = s_hashes[i].instance->_transform->getGlobalMatrix();
 
+                    camera *camera = camera::getMainCamera();
+                    if (!camera)
+                        return;
                     // render to frame buffer
                     graphics::opengl::noBlendContext _; // disable blending (RAII)
                     glBindFramebuffer(GL_FRAMEBUFFER, s_frameBuffer);
                     glClearColor(0, 0, 0, 0);
                     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                     glUseProgram(s_program);
+                    glUniformMatrix4fv(s_viewMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getViewMatrix()));
+                    glUniformMatrix4fv(s_projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getProjectionMatrix()));
                     for (size_t i = 0; i < s_hashesCount; i++)
                         if (s_hashes[i].vao)
                         {
                             glBindVertexArray(s_hashes[i].vao);
-                            glUniformMatrix4fv(s_modelLocation, 1, GL_FALSE, glm::value_ptr(s_hashes[i].model));
+                            glUniformMatrix4fv(s_modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(s_hashes[i].model));
                             glUniform1ui(s_hashLocation, static_cast<GLuint>(i + 1)); // 0 is clear color
                             glDrawElements(GL_TRIANGLES, s_hashes[i].verticesCount, GL_UNSIGNED_INT, 0);
                         }
@@ -220,6 +239,13 @@ struct pointerRead : public component
                     s_lastPointedId = hashTypeMax;
                 }
             });
+
+#if DEBUG
+            application::postComponentHooks.push_back([]() {
+                if (input::isKeyJustDown(input::key::k))
+                    drawDebugFrameBuffer();
+            });
+#endif
         }
     }
 
@@ -271,86 +297,9 @@ struct pointerRead : public component
         log::logInfo("{} size:{}", s_screenHashesSizes, s_screenHashesSizes.x * s_screenHashesSizes.y);
     }
 
-    static inline void frameBufferDebug_()
-    {
-        if (input::isKeyJustDown(input::key::k))
-        {
-            drawDebugFrameBuffer();
-            std::this_thread::sleep_for(std::chrono::duration<float>(1));
-        }
-    }
-
     static inline void drawDebugFrameBuffer()
     {
-        graphics::opengl::debugModeContext _;
-
-        constexpr auto vertexShader = R"(
-            #version 460 core
-            const vec2 verts[3] = vec2[3](
-                vec2(-1.0, -1.0),
-                vec2( 3.0, -1.0),
-                vec2(-1.0,  3.0)
-            );
-            void main() 
-            {
-                gl_Position = vec4(verts[gl_VertexID], 0.0, 1.0);
-            }
-            )";
-        constexpr auto fragmentShader = R"(
-            #version 460 core
-            layout(binding = 0) uniform usampler2D uTex;
-            out vec4 FragColor;
-
-            // 32-bit integer hash -> vec3 in [0,1]
-            vec3 hash3(uint n)
-            {
-                // integer scrambling: different large odd constants for each channel
-                n ^= n >> 16u;
-                n *= 0x7feb352du;  // large odd prime
-                n ^= n >> 15u;
-                n *= 0x846ca68bu;
-                n ^= n >> 16u;
-
-                // create three different seeds by bit rotation & mixing
-                uint x = n;
-                uint y = n * 0x9e3779b1u;  // golden-ratio constant
-                uint z = n * 0x85ebca77u;
-
-                // convert to [0,1] floats using 2^-32
-                const float inv32 = 1.0 / 4294967296.0; // 1/2^32
-                return vec3(float(x), float(y), float(z)) * inv32;
-            }
-
-            void main() 
-            {
-                ivec2 texel = ivec2(gl_FragCoord.xy);
-                uint hash = texelFetch(uTex, texel, 0).r;
-                vec3 result = hash3(hash);
-                FragColor = vec4(result, 1.0);
-            }
-            )";
-
-        static auto s_program = graphics::opengl::createProgram(vertexShader, fragmentShader);
-        fatalAssert(s_program, "could not create opengl program for pointerRead component's debug");
-        static auto texLocation = glGetUniformLocation(s_program, "tex");
-
-        static GLuint vao = 0;
-        if (vao == 0)
-            glGenVertexArrays(1, &vao);
-
-        graphics::opengl::noDepthTestContext __;
-        glUseProgram(s_program);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, s_texture);
-        glUniform1i(texLocation, 0);
-
-        glBindVertexArray(vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-
-        glfwSwapBuffers(glfwGetCurrentContext());
-
-        glBindVertexArray(0);
-        glUseProgram(0);
+        graphics::opengl::displayFrameBufferAsHashFullScreen(s_frameBuffer, 1);
     }
 };
 

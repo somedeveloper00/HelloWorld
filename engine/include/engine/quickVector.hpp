@@ -4,7 +4,6 @@
 #include "engine/errorHandling.hpp"
 #include "template.hpp"
 #include <algorithm>
-#include <initializer_list>
 #include <tchar.h>
 #include <type_traits>
 
@@ -33,6 +32,7 @@ struct quickVector
 
     quickVector() = default;
 
+    // initialize vector with initial capacity (length of internal array)
     quickVector(const size_t initialCapacity)
         : _size(0), _capacity(initialCapacity)
     {
@@ -267,7 +267,7 @@ struct quickVector
         _size = 0;
     }
 
-    // will be invalid if there's no items 
+    // will be invalid if there's no items
     T &back()
     {
         return _data[_size - 1];

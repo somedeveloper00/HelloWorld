@@ -6,10 +6,7 @@
 #include "engine/data.hpp"
 #include "engine/errorHandling.hpp"
 #include "engine/window.hpp"
-#include "glm/ext/matrix_clip_space.hpp"
-#include "glm/ext/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
-#include "glm/matrix.hpp"
 
 namespace engine::ui
 {
@@ -76,9 +73,8 @@ struct uiImage : public component
             }
             )";
 
-            // make program and vao/ebo ready
-            static GLuint program = graphics::opengl::createProgram(vertexShader, fragmentShader);
-            fatalAssert(program, "could not create opengl program for uiImage component");
+            // make program data ready
+            static GLuint program = graphics::opengl::fatalCreateProgram("uiImage", vertexShader, fragmentShader);
             static GLint modelMatrixLocation = graphics::opengl::fatalGetLocation(program, "modelMatrix");
             static GLint viewMatrixLocation = graphics::opengl::fatalGetLocation(program, "viewMatrix");
             static GLint projectionMatrixLocation = graphics::opengl::fatalGetLocation(program, "projectionMatrix");

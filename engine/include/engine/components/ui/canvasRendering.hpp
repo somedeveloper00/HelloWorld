@@ -1,11 +1,13 @@
 #pragma once
 
 #include "engine/app.hpp"
+#include "engine/components/camera.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/quickVector.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/fwd.hpp"
+#include "glm/gtc/quaternion.hpp"
 #include <algorithm>
 
 namespace engine::ui
@@ -80,7 +82,7 @@ struct uiTransform final : public transform
 
     // properties for the selected layout type
     union {
-        layoutNoneProperties none{};
+        layoutNoneProperties none{}; // <- default
         layoutHorizontalProperties horizontal;
         layoutVerticalProperties vertical;
     } layoutProperties;
@@ -115,6 +117,7 @@ struct uiTransform final : public transform
         initialize_();
         if (!transform::created_())
             return false;
+        return true;
     }
 
     float getWeightX() const noexcept
@@ -193,24 +196,50 @@ struct canvas : public component
 {
     friend uiTransform;
 
-    // increases unit scale to match screen pixels
-    bool scaleToScreenPixels = true;
-
-    // multiplier for scale unit
-    float scaleUnitMultiplier = 1.f;
-
     createTypeInformation(canvas, component);
 
-  protected:
-    // scale unit for this canvas in canvas-space
-    glm::vec2 _unit{1, 1};
-    transform *_transform;
-
-    // returns first parent
-    static inline weakRef<canvas> findClosestCanvas_(const entity *startingEntity)
+    enum positionType
     {
-        return startingEntity->getComponentInParent<canvas>();
+        // fits screen at all times (positions itself according to the main camera)
+        fullScreen,
+
+        // free transform
+        world
+    };
+
+    struct fullScreenProperties
+    {
+        // distance from the rendering camera's nearClip
+        float distanceFromNearClip = 1.f;
+
+        // multiplier applied to unit scale (if 1, it'll be equal to pixel size)
+        glm::vec2 unitScaleMultiplier{1.f, 1.f};
+    };
+
+    struct worldProperties
+    {
+        // overrides the unit scale of its children. value is in world space
+        glm::vec2 unitScale{0.01f, 0.01f};
+    };
+
+    // current position type. updates are affected in the next frame
+    positionType positionType = positionType::fullScreen;
+
+    // properties for the selected position type
+    union {
+        fullScreenProperties fullScreen{}; // <- default
+        worldProperties world;
+    } positionProperties;
+
+    void markDirty() noexcept
+    {
+        _dirty = true;
     }
+
+  protected:
+    // unit scale for this canvas in world space
+    glm::vec2 _unitScale{1, 1};
+    transform *_transform;
 
     bool created_() override
     {
@@ -220,7 +249,13 @@ struct canvas : public component
             return false;
         s_canvases.push_back(this);
         _transform->pushLock();
-        updateScaleUnit_();
+        if (positionType == positionType::fullScreen)
+        {
+            setUnitScaleToFullScreen();
+            moveToFullScreenPostion();
+        }
+        else
+            setUnitScaleToWorld();
         return true;
     }
 
@@ -232,27 +267,50 @@ struct canvas : public component
 
   private:
     static inline quickVector<canvas *> s_canvases{};
-    bool _dirty;
+    bool _dirty = true;
 
     static inline void initialize_()
     {
         ensureExecutesOnce();
         application::postComponentHooks.insert(0, []() {
             s_canvases.forEach([](canvas *instance) {
-                instance->_dirty = instance->_transform->isDirty();
+                if (instance->positionType == positionType::fullScreen)
+                    instance->moveToFullScreenPostion();
+                else
+                    instance->setUnitScaleToWorld();
+                instance->_dirty |= instance->_transform->isDirty();
             });
         });
         graphics::frameBufferSizeChanged.push_back([]() {
             s_canvases.forEach([](canvas *instance) {
-                instance->updateScaleUnit_();
+                if (instance->positionType == positionType::fullScreen)
+                    instance->setUnitScaleToFullScreen();
             });
         });
     }
 
-    void updateScaleUnit_()
+    // updates _unitScale
+    void setUnitScaleToFullScreen() noexcept
     {
-        _unit = 1.f / (scaleToScreenPixels ? static_cast<glm::vec2>(graphics::getFrameBufferSize()) : glm::vec2(1.f)) * scaleUnitMultiplier;
-        _transform->markDirty();
+        _unitScale = positionProperties.fullScreen.unitScaleMultiplier / static_cast<glm::vec2>(graphics::getFrameBufferSize());
+        markDirty();
+    }
+    // updates _unitScale
+    void setUnitScaleToWorld() noexcept
+    {
+        if (_unitScale != positionProperties.world.unitScale)
+        {
+            _unitScale = positionProperties.world.unitScale;
+            markDirty();
+        }
+    }
+
+    void moveToFullScreenPostion()
+    {
+        const auto *camera = camera::getMainCamera();
+        if (!camera)
+            return;
+        camera->setTransformAcrossViewPort(_transform, positionProperties.fullScreen.distanceFromNearClip);
     }
 };
 
@@ -264,7 +322,7 @@ inline void uiTransform::updateMatricesRecursively_(const glm::vec2 &canvasUnit,
     canvas *canvasPtr;
     if (!skipCanvas && (canvasPtr = ent.getComponent<canvas>()))
     {
-        uiTransform::updateMatricesRecursively_(canvasPtr->_unit, canvasPtr->_transform->getGlobalMatrix(), ent, canvasPtr->_dirty | parentDirty, true);
+        uiTransform::updateMatricesRecursively_(canvasPtr->_unitScale, canvasPtr->_transform->getGlobalMatrix(), ent, canvasPtr->_dirty | parentDirty, true);
         return;
     }
     if (uiTransform *ptr = ent.getComponent<uiTransform>())
@@ -478,7 +536,7 @@ inline void uiTransform::recursivelyUpdateTransforms_(const entity *ent, glm::ve
 {
     canvas *canvasInstance = ent->getComponent<canvas>();
     if (canvasInstance)
-        sizeUnit = canvasInstance->_unit;
+        sizeUnit = canvasInstance->_unitScale;
     if (uiTransform *instance = ent->getComponent<uiTransform>())
     {
         switch (instance->layout)

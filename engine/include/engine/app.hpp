@@ -288,6 +288,7 @@ struct entity
         if (!newComponent->created_())
         {
             _newComponents.pop_back();
+            log::logError("could not add component \"{}\" to entity \"{}\"", typeid(T).name(), name);
             return {};
         }
         newComponent->enabled_();

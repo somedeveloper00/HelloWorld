@@ -1,6 +1,4 @@
 #pragma once
-#ifndef GAMEENGINE_WINDOWS_H
-#define GAMEENGINE_WINDOWS_H
 
 // clang-format off
 #include <glad/gl.h>
@@ -8,18 +6,14 @@
 // clang-format on
 
 #include "app.hpp"
-#include "benchmark.hpp"
 #include "data.hpp"
-#include "engine/benchmark.hpp"
-#include "engine/quickVector.hpp"
 #include "errorHandling.hpp"
 #include "glm/fwd.hpp"
-#include "log.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
-#include <string>
-#include <vector>
+#include <thread>
 
 // #ifdef WIN32 // use high performance GPU
 // extern "C"
@@ -111,9 +105,9 @@ struct input final
 
     static inline void initialize_(GLFWwindow *window)
     {
-        static auto &s_downKeys = *new std::vector<size_t>();
-        static auto &s_upKeys = *new std::vector<size_t>();
-        static auto &s_repeatKeys = *new std::vector<size_t>();
+        static auto &s_downKeys = *new quickVector<size_t>();
+        static auto &s_upKeys = *new quickVector<size_t>();
+        static auto &s_repeatKeys = *new quickVector<size_t>();
 
         glfwSetKeyCallback(window, [](GLFWwindow *window, int glfwKey, int scancode, int action, int mods) {
             auto key = static_cast<size_t>(glfwKeyToEngineKey_(glfwKey));
@@ -125,12 +119,12 @@ struct input final
                 s_downKeys.push_back(key);
             else if (action == GLFW_REPEAT)
             {
-                s_downKeys.erase(std::remove(s_downKeys.begin(), s_downKeys.end(), key), s_downKeys.end());
+                s_downKeys.erase(key);
                 s_repeatKeys.push_back(key);
             }
             else
             {
-                s_downKeys.erase(std::remove(s_downKeys.begin(), s_downKeys.end(), key), s_downKeys.end());
+                s_downKeys.erase(key);
                 s_upKeys.push_back(key);
             }
         });
@@ -144,27 +138,28 @@ struct input final
                 s_downKeys.push_back(key);
             else if (action == GLFW_REPEAT)
             {
-                s_downKeys.erase(std::remove(s_downKeys.begin(), s_downKeys.end(), key), s_downKeys.end());
+                s_downKeys.erase(key);
                 s_repeatKeys.push_back(key);
             }
             else
             {
-                s_downKeys.erase(std::remove(s_downKeys.begin(), s_downKeys.end(), key), s_downKeys.end());
+                s_downKeys.erase(key);
                 s_upKeys.push_back(key);
             }
         });
         application::preComponentHooks.push_back([window]() {
-            for (auto key : s_downKeys)
+            s_downKeys.forEach([](const auto &key) {
                 if (s_states[key] == state::up)
                     s_states[key] = state::justDown;
                 else if (s_states[key] == state::justDown)
                     s_states[key] = state::heldDown;
-            for (auto key : s_repeatKeys) // we want clicks to occur repeatedly here
+            });
+            s_repeatKeys.forEachAndClear([](const auto &key) {
                 s_states[key] = state::justDown | state::heldDown;
-            s_repeatKeys.clear();
-            for (auto key : s_upKeys)
+            });
+            s_upKeys.forEachAndClear([](const auto &key) {
                 s_states[key] = state::up;
-            s_upKeys.clear();
+            });
 
             static double x, y;
             glfwGetCursorPos(window, &x, &y);
@@ -864,6 +859,103 @@ struct graphics final
             quickVector<std::function<void()>>{8}};
         static inline std::mutex onRendersMutex;
 
+        // displays the fb as hash (color coded randomly based on its values)
+        static inline void displayFrameBufferAsHashFullScreen(const GLuint fb, const float secondsPause)
+        {
+            debugModeContext _;
+            constexpr auto vertexShader = R"(
+            #version 460 core
+            const vec2 verts[3] = vec2[3](
+                vec2(-1.0, -1.0),
+                vec2( 3.0, -1.0),
+                vec2(-1.0,  3.0)
+            );
+            void main() 
+            {
+                gl_Position = vec4(verts[gl_VertexID], 0.0, 1.0);
+            }
+            )";
+            constexpr auto fragmentShader = R"(
+            #version 460 core
+            layout(binding = 0) uniform usampler2D uTex;
+            out vec4 FragColor;
+
+            // 32-bit integer hash -> vec3 in [0,1]
+            vec3 hash3(uint n)
+            {
+                // integer scrambling: different large odd constants for each channel
+                n ^= n >> 16u;
+                n *= 0x7feb352du;  // large odd prime
+                n ^= n >> 15u;
+                n *= 0x846ca68bu;
+                n ^= n >> 16u;
+
+                // create three different seeds by bit rotation & mixing
+                uint x = n;
+                uint y = n * 0x9e3779b1u;  // golden-ratio constant
+                uint z = n * 0x85ebca77u;
+
+                // convert to [0,1] floats using 2^-32
+                const float inv32 = 1.0 / 4294967296.0; // 1/2^32
+                return vec3(float(x), float(y), float(z)) * inv32;
+            }
+
+            void main() 
+            {
+                ivec2 texel = ivec2(gl_FragCoord.xy);
+                uint hash = texelFetch(uTex, texel, 0).r;
+                vec3 result = hash3(hash);
+                FragColor = vec4(result, 1.0);
+            }
+            )";
+
+            static auto s_program = graphics::opengl::fatalCreateProgram("pointerRead component's debug", vertexShader, fragmentShader);
+            static auto s_texLocation = graphics::opengl::fatalGetLocation(s_program, "uTex");
+
+            // read fb's color
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fb);
+            GLint colorAttachment;
+            glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &colorAttachment);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+            if (colorAttachment == 0)
+            {
+                log::logError("displayFrameBufferFullScreen: framebuffer {} has no color attachment.", fb);
+                std::this_thread::sleep_for(std::chrono::duration<float>(secondsPause));
+                return;
+            }
+
+            // draw
+            static GLuint vao = 0;
+            if (!vao)
+                glGenVertexArrays(1, &vao);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glUseProgram(s_program);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, colorAttachment);
+            glUniform1i(s_texLocation, 0);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glfwSwapBuffers(graphics::s_window);
+
+            // cleanup
+            glBindVertexArray(0);
+            glUseProgram(0);
+            glBindTexture(GL_TEXTURE_2D, 0);
+
+            // sleep
+            std::this_thread::sleep_for(std::chrono::duration<float>(secondsPause));
+        }
+
+        // same as createProgram, but it'll cause a fatal assert
+        static inline GLuint fatalCreateProgram(const char *const debugName, const std::string &vertexShaderSource, const std::string &fragmentShaderSource)
+        {
+            const auto program = createProgram(vertexShaderSource, fragmentShaderSource);
+            if (!program)
+                fatalAssert(false, ("could not create opengl program for \"" + std::string(debugName) + "\"").c_str());
+            return program;
+        }
+
         // compiles the source vertex shader and the source fragment shader, links them to a program and returns the program, or 0/GL_FALSE if failed
         static inline GLuint createProgram(const std::string &vertexShaderSource, const std::string &fragmentShaderSource)
         {
@@ -891,11 +983,11 @@ struct graphics final
             return program;
         }
 
-        static inline GLuint fatalGetLocation(const GLuint program, const std::string &name)
+        static inline GLuint fatalGetLocation(const GLuint program, const char *const name)
         {
-            const auto r = glGetUniformLocation(program, name.c_str());
+            const auto r = glGetUniformLocation(program, name);
             if (r == -1)
-                fatalAssert(false, ("could not find \"" + name + "\" uniform variable location.").c_str());
+                fatalAssert(false, ("could not find \"" + std::string(name) + "\" uniform variable location.").c_str());
             return r;
         }
 
@@ -1050,6 +1142,8 @@ struct graphics final
     static inline float s_dpi;
 };
 
+#ifndef GAMEENGINE_WINDOWS_H
+#define GAMEENGINE_WINDOWS_H
 inline input::state operator|(input::state a, input::state b) noexcept
 {
     using underlying = std::underlying_type_t<input::state>;

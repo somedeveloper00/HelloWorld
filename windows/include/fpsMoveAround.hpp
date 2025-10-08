@@ -21,7 +21,6 @@ struct fpsMoveAround : public engine::component
 
     void update_() override
     {
-        engine::graphics::setCursorVisibility(false);
         auto transform = getEntity()->getComponent<engine::transform>();
         if (!transform)
             return;
@@ -39,15 +38,24 @@ struct fpsMoveAround : public engine::component
             transform->position += transform->getUp() * speed * engine::time::getDeltaTime();
         if (engine::input::isKeyHeldDown(engine::input::key::q))
             transform->position -= transform->getUp() * speed * engine::time::getDeltaTime();
-        // rotate
-        const auto mouseDelta = static_cast<glm::vec2>(engine::input::getMousePositionCentered()) /
-                                static_cast<glm::vec2>(engine::graphics::getFrameBufferSize());
-        engine::graphics::setMousePositionCentered({0, 0});
-        if (glm::length(mouseDelta) > 0.4f)
-            return;
+
+        if (engine::input::isKeyHeldDown(engine::input::key::mouseRight))
+        {
+            engine::graphics::setCursorVisibility(false);
+            // rotate
+            const auto mouseDelta = static_cast<glm::vec2>(engine::input::getMousePositionCentered()) /
+                                    static_cast<glm::vec2>(engine::graphics::getFrameBufferSize());
+            engine::graphics::setMousePositionCentered({0, 0});
+            if (glm::length(mouseDelta) > 0.4f)
+                return;
+            pitch = getLockedPitch(pitch + lookSpeed * mouseDelta.y);
+            yaw -= lookSpeed * mouseDelta.x;
+        }
+        else
+            engine::graphics::setCursorVisibility(true);
         transform->rotation = glm::quat(glm::vec3(
-            glm::radians(pitch = getLockedPitch(pitch + lookSpeed * mouseDelta.y)),
-            glm::radians(yaw -= lookSpeed * mouseDelta.x),
+            glm::radians(pitch),
+            glm::radians(yaw),
             0));
     }
 

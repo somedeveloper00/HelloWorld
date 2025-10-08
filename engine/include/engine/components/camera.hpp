@@ -1,13 +1,9 @@
 #pragma once
 
 #include "engine/app.hpp"
-#include "engine/log.hpp"
-#include "engine/quickVector.hpp"
-#include "engine/ref.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/fwd.hpp"
-#include "glm/gtc/constants.hpp"
 #include "glm/trigonometric.hpp"
 #include "transform.hpp"
 
@@ -79,6 +75,43 @@ struct camera : public component
         return _viewMatrix;
     }
 
+    transform *getTransform() const noexcept
+    {
+        return _transform;
+    }
+
+    // updates the given transform such that it fills the viewport of this camera. also handles dirtying the given transform
+    void setTransformAcrossViewPort(transform *transform, const float distanceFromNearClip) const
+    {
+        // position
+        const auto pos = _transform->position + _transform->getForward() * (_nearPlane + distanceFromNearClip);
+        if (pos != transform->position)
+        {
+            transform->position = pos;
+            transform->markDirty();
+        }
+        // rotation
+        const auto rot = glm::quatLookAt(-_transform->getForward(), _transform->getUp());
+        if (rot != transform->rotation)
+        {
+            transform->rotation = rot;
+            transform->markDirty();
+        }
+        // scale
+        const float height = _isPerspective
+                                 ? tan(getFieldOfView() * 0.5f) * (_nearPlane + distanceFromNearClip)
+                                 : graphics::getFrameBufferSize().y;
+        const float width = _isPerspective
+                                ? height * graphics::getFrameBufferSize().x / graphics::getFrameBufferSize().y
+                                : graphics::getFrameBufferSize().x;
+        const glm::vec3 scale{width, height, _transform->scale.z};
+        if (scale != transform->scale)
+        {
+            transform->scale = scale;
+            transform->markDirty();
+        }
+    }
+
     // could be nullptr
     static inline camera *getMainCamera()
     {
@@ -94,7 +127,7 @@ struct camera : public component
     // in radians
     float _fieldOfView = glm::radians(60.f);
     float _nearPlane = 0.01f;
-    float _farPlane = 100.f;
+    float _farPlane = 1000.f;
     transform *_transform;
     bool _projectionMatrixDirty = true;
 
@@ -102,6 +135,12 @@ struct camera : public component
     {
         ensureExecutesOnce();
         static quickVector<camera *> dirties{};
+        graphics::frameBufferSizeChanged.push_back([]() {
+            s_cameras.forEach([](camera *instance) {
+                instance->updateProjectionMatrix_();
+                instance->_projectionMatrixDirty = false;
+            });
+        });
         // before transform
         application::postComponentHooks.insert(0, []() {
             bench("camera view matrix(pre)");
@@ -114,7 +153,7 @@ struct camera : public component
                 // update projection matrices
                 if (instance->_projectionMatrixDirty)
                 {
-                    instance->updateViewMatrix_();
+                    instance->updateProjectionMatrix_();
                     instance->_projectionMatrixDirty = false;
                 }
             });
@@ -148,13 +187,13 @@ struct camera : public component
             s_main = s_cameras.size() > 0 ? s_cameras.back() : nullptr;
     }
 
-    void updateViewMatrix_()
+    void updateProjectionMatrix_()
     {
-        const auto size = graphics::getFrameBufferSize();
+        const auto size = static_cast<glm::vec2>(graphics::getFrameBufferSize());
         _projectionMatrix =
             _isPerspective
-                ? glm::perspective(_fieldOfView, size.x / static_cast<float>(size.y), _nearPlane, _farPlane)
-                : glm::ortho(-size.x / 200.f, size.x / 200.f, -size.y / 200.f, size.y / 200.f, _nearPlane, _farPlane);
+                ? glm::perspectiveFov(_fieldOfView, size.x, size.y, _nearPlane, _farPlane)
+                : glm::ortho(-size.x / 2.f, size.x / 2.f, -size.y / 2.f, size.y / 2.f, _nearPlane, _farPlane);
     }
 };
 } // namespace engine
