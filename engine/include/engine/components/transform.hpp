@@ -20,7 +20,7 @@ struct transform : public component
 
     glm::vec3 getForward() const
     {
-        return rotation * glm::vec3(0.f, 0.f, -1.f);
+        return rotation * glm::vec3(0.f, 0.f, 1.f);
     }
 
     glm::vec3 getUp() const

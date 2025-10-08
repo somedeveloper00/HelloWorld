@@ -1,12 +1,15 @@
 #pragma once
 
 // clang-format off
+#define GLM_FORCE_LEFT_HANDED
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE  
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 // clang-format on
 
 #include "app.hpp"
 #include "data.hpp"
+#include "engine/app.hpp"
 #include "errorHandling.hpp"
 #include "glm/fwd.hpp"
 #include <chrono>
@@ -98,16 +101,24 @@ struct input final
     // 0,0 is center. max,max is top-right
     static inline glm::ivec2 getMousePositionCentered() noexcept;
 
+    // get the mouse wheel delta from the last frame
+    static inline glm::vec2 getMouseWheelDelta() noexcept
+    {
+        return s_mouseWheelDelta;
+    }
+
   private:
     static inline state s_states[static_cast<size_t>(key::count)];
     static inline glm::ivec2 s_mousePos;
     static inline bool s_mouseInWindow = false;
+    static inline glm::vec2 s_mouseWheelDelta;
 
     static inline void initialize_(GLFWwindow *window)
     {
         static auto &s_downKeys = *new quickVector<size_t>();
         static auto &s_upKeys = *new quickVector<size_t>();
         static auto &s_repeatKeys = *new quickVector<size_t>();
+        static glm::vec2 s_scrollDelta{};
 
         glfwSetKeyCallback(window, [](GLFWwindow *window, int glfwKey, int scancode, int action, int mods) {
             auto key = static_cast<size_t>(glfwKeyToEngineKey_(glfwKey));
@@ -147,6 +158,10 @@ struct input final
                 s_upKeys.push_back(key);
             }
         });
+        glfwSetScrollCallback(window, [](GLFWwindow *window, double xoffset, double yoffset) {
+            s_scrollDelta.x = xoffset;
+            s_scrollDelta.y = yoffset;
+        });
         application::preComponentHooks.push_back([window]() {
             s_downKeys.forEach([](const auto &key) {
                 if (s_states[key] == state::up)
@@ -164,6 +179,9 @@ struct input final
             static double x, y;
             glfwGetCursorPos(window, &x, &y);
             updateCursorPos(x, y);
+
+            s_mouseWheelDelta = s_scrollDelta;
+            s_scrollDelta.x = s_scrollDelta.y = 0;
         });
     }
 
@@ -1094,6 +1112,7 @@ struct graphics final
         {
             fatalAssert(gladLoadGL((GLADloadfunc)glfwGetProcAddress) != 0, "gladLoadGL failed");
             glEnable(GL_DEPTH_TEST);
+            glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // depth between 0 and 1 (no more negatives)
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

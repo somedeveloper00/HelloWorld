@@ -1,11 +1,16 @@
+// clang-format off
+#include "engine/window.hpp"
+// clang-format on
+
 #include "debugShortcuts.hpp"
 #include "engine/app.hpp"
 #include "engine/components/camera.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
-#include "engine/window.hpp"
 #include "fpsMoveAround.hpp"
+#include "glm/gtc/quaternion.hpp"
+#include "glm/trigonometric.hpp"
 #include <cmath>
 #include <string>
 
@@ -25,7 +30,8 @@ int main()
     canvasEntity->addComponent<engine::ui::canvas>();
     canvasEntity->getComponent<engine::ui::canvas>()->positionType = engine::ui::canvas::positionType::world;
     canvasEntity->getComponent<engine::ui::canvas>()->positionProperties.world.unitScale = {0.01f, 0.01f};
-    canvasEntity->getComponent<engine::transform>()->position.z = 1;
+    // canvasEntity->getComponent<engine::ui::canvas>()->positionProperties.fullScreen.distanceFromNearClip = {0.01f, 0.01f};
+    canvasEntity->getComponent<engine::transform>()->position.z = 2;
     auto child = engine::entity::create("fill");
     {
         child->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
@@ -37,11 +43,11 @@ int main()
     {
         rightCorner->setParent(canvasEntity);
         rightCorner->addComponent<engine::ui::uiImage>()->color = {1, 0, 0, 1};
-        rightCorner->getComponent<engine::ui::uiTransform>()->minAnchor = {1, 1};
+        rightCorner->getComponent<engine::ui::uiTransform>()->minAnchor = {0.5f, 0};
         rightCorner->getComponent<engine::ui::uiTransform>()->maxAnchor = {1, 1};
-        rightCorner->getComponent<engine::ui::uiTransform>()->deltaSize = {10, 10};
+        // rightCorner->getComponent<engine::ui::uiTransform>()->deltaSize = {10, 10};
         // rightCorner->getComponent<engine::ui::uiTransform>()->pivot = {1, 1};
-        rightCorner->getComponent<engine::ui::uiTransform>()->position.z += 0.01f;
+        rightCorner->getComponent<engine::ui::uiTransform>()->position.z -= 0.001f;
     }
     engine::application::postComponentHooks.push_back([&]() {
         return;

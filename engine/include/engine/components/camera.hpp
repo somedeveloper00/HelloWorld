@@ -3,6 +3,7 @@
 #include "engine/app.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
+#include "glm/ext/matrix_transform.hpp"
 #include "glm/fwd.hpp"
 #include "glm/trigonometric.hpp"
 #include "transform.hpp"
@@ -21,8 +22,17 @@ struct camera : public component
     }
 
     // in radians
+    template <bool RangeCheck = true>
     void setFieldOfView(const float fieldOfView) noexcept
     {
+        if constexpr (RangeCheck)
+        {
+            if (fieldOfView <= 0 || fieldOfView >= 360)
+            {
+                log::logError("tried to assign invalid field of view: {}", fieldOfView);
+                return;
+            }
+        }
         _fieldOfView = fieldOfView;
         _projectionMatrixDirty = true;
     }
@@ -91,7 +101,7 @@ struct camera : public component
             transform->markDirty();
         }
         // rotation
-        const auto rot = glm::quatLookAt(-_transform->getForward(), _transform->getUp());
+        const auto rot = glm::quatLookAt(_transform->getForward(), _transform->getUp());
         if (rot != transform->rotation)
         {
             transform->rotation = rot;
@@ -162,6 +172,7 @@ struct camera : public component
         application::postComponentHooks.push_back([]() {
             bench("camera view matrix(post)");
             dirties.forEach([](camera *instance) {
+                // instance->_viewMatrix = glm::lookAt(instance->_transform->position, instance->_transform->position + instance->_transform->getForward(), instance->_transform->position + instance->_transform->getUp());
                 instance->_viewMatrix = glm::inverse(instance->_transform->getGlobalMatrix());
             });
         });

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/app.hpp"
+#include "engine/components/camera.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/window.hpp"
 #include "glm/fwd.hpp"
@@ -14,9 +15,10 @@ struct fpsMoveAround : public engine::component
 
     float speed = 7.f;
     float lookSpeed = 100.f;
+    float fovChangeRate = .1f;
 
   private:
-    float yaw = 180;
+    float yaw = 0;
     float pitch = 0;
 
     void update_() override
@@ -25,7 +27,11 @@ struct fpsMoveAround : public engine::component
         if (!transform)
             return;
         transform->markDirty();
-        float speed = engine::input::isKeyHeldDown(engine::input::key::leftShift) ? this->speed * 5.f : this->speed;
+        float speed = engine::input::isKeyHeldDown(engine::input::key::leftShift)
+                          ? this->speed * 5.f
+                      : engine::input::isKeyHeldDown(engine::input::key::leftControl)
+                          ? this->speed / 5.f
+                          : this->speed;
         if (engine::input::isKeyHeldDown(engine::input::key::w))
             transform->position += transform->getForward() * speed * engine::time::getDeltaTime();
         if (engine::input::isKeyHeldDown(engine::input::key::s))
@@ -57,6 +63,15 @@ struct fpsMoveAround : public engine::component
             glm::radians(pitch),
             glm::radians(yaw),
             0));
+
+        // field of view change
+        if (engine::camera *camera = getEntity()->getComponent<engine::camera>())
+        {
+            const auto fov = camera->getFieldOfView();
+            const auto newFov = fov + engine::input::getMouseWheelDelta().y * fovChangeRate;
+            if (newFov != fov)
+                camera->setFieldOfView(newFov);
+        }
     }
 
     static float getLockedPitch(const float pitch) noexcept

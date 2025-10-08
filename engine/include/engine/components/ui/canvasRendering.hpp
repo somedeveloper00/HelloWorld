@@ -236,6 +236,12 @@ struct canvas : public component
         _dirty = true;
     }
 
+    // get internal unit scale calculated last frame
+    glm::vec2 getUnitScale() const noexcept
+    {
+        return _unitScale;
+    }
+
   protected:
     // unit scale for this canvas in world space
     glm::vec2 _unitScale{1, 1};
