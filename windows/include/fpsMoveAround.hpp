@@ -54,8 +54,8 @@ struct fpsMoveAround : public engine::component
             engine::graphics::setMousePositionCentered({0, 0});
             if (glm::length(mouseDelta) > 0.4f)
                 return;
-            pitch = getLockedPitch(pitch + lookSpeed * mouseDelta.y);
-            yaw -= lookSpeed * mouseDelta.x;
+            pitch = getLockedPitch(pitch - lookSpeed * mouseDelta.y);
+            yaw += lookSpeed * mouseDelta.x;
         }
         else
             engine::graphics::setCursorVisibility(true);
