@@ -15,7 +15,7 @@ struct color final
 
     color() = default;
 
-    color(float r, float g, float b, float a = 1.f)
+    constexpr color(float r, float g, float b, float a = 1.f)
         : r(r), g(g), b(b), a(a)
     {
     }

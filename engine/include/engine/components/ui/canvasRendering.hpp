@@ -6,6 +6,7 @@
 #include "engine/quickVector.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/matrix_transform.hpp"
+#include "glm/ext/vector_relational.hpp"
 #include "glm/fwd.hpp"
 #include "glm/gtc/quaternion.hpp"
 #include <algorithm>
@@ -97,7 +98,7 @@ struct uiTransform final : public transform
     glm::vec2 deltaSize{0.f, 0.f};
 
     // normalized point to determine the pivot of this uiTransform (central point)
-    glm::vec2 pivot{0.f, 0.f};
+    glm::vec2 pivot{.5f, .5f};
 
     void markDirty() noexcept override
     {
@@ -220,6 +221,9 @@ struct canvas : public component
     {
         // overrides the unit scale of its children. value is in world space
         glm::vec2 unitScale{0.01f, 0.01f};
+
+        // size of this canvas in world space
+        glm::vec2 size{1, 1};
     };
 
     // current position type. updates are affected in the next frame
@@ -230,6 +234,13 @@ struct canvas : public component
         fullScreenProperties fullScreen{}; // <- default
         worldProperties world;
     } positionProperties;
+
+    canvas(enum positionType positionType = positionType::fullScreen)
+        : positionType(positionType)
+    {
+        if (positionType == positionType::world)
+            new (&positionProperties.world) worldProperties();
+    }
 
     void markDirty() noexcept
     {
@@ -261,7 +272,10 @@ struct canvas : public component
             moveToFullScreenPostion();
         }
         else
+        {
             setUnitScaleToWorld();
+            scaleToWorld();
+        }
         return true;
     }
 
@@ -280,10 +294,15 @@ struct canvas : public component
         ensureExecutesOnce();
         application::postComponentHooks.insert(0, []() {
             s_canvases.forEach([](canvas *instance) {
+                // update transform
                 if (instance->positionType == positionType::fullScreen)
                     instance->moveToFullScreenPostion();
                 else
+                {
                     instance->setUnitScaleToWorld();
+                    instance->scaleToWorld();
+                }
+                // update dirtiness
                 instance->_dirty |= instance->_transform->isDirty();
             });
         });
@@ -301,6 +320,7 @@ struct canvas : public component
         _unitScale = positionProperties.fullScreen.unitScaleMultiplier / static_cast<glm::vec2>(graphics::getFrameBufferSize());
         markDirty();
     }
+
     // updates _unitScale
     void setUnitScaleToWorld() noexcept
     {
@@ -311,12 +331,24 @@ struct canvas : public component
         }
     }
 
+    // updates _transform
+    void scaleToWorld() noexcept
+    {
+        if (_transform->scale.x != positionProperties.world.size.x || _transform->scale.y != positionProperties.world.size.y)
+        {
+            _transform->scale.x = positionProperties.world.size.x;
+            _transform->scale.y = positionProperties.world.size.y;
+            _transform->markDirty();
+        }
+    }
+
+    // updates _transform and marks it dirty
     void moveToFullScreenPostion()
     {
         const auto *camera = camera::getMainCamera();
         if (!camera)
             return;
-        camera->setTransformAcrossViewPort(_transform, positionProperties.fullScreen.distanceFromNearClip);
+        camera->setTransformAcrossViewPortAndMarkDirty(_transform, positionProperties.fullScreen.distanceFromNearClip);
     }
 };
 
@@ -341,9 +373,10 @@ inline void uiTransform::updateMatricesRecursively_(const glm::vec2 &canvasUnit,
                                     glm::vec3((ref.maxAnchor - ref.minAnchor) + // anchor size
                                                   ref.deltaSize * canvasUnit,   // delta size
                                               1);
-            const glm::vec3 position = glm::vec3((ref.minAnchor + ref.maxAnchor) - 1.f - ref.pivot, 0) + // anchor size and pivot
-                                       ref.position * glm::vec3(canvasUnit * 2.f, 1);                    // position delta
-            const glm::quat rotation = ref.rotation;                                                     // no conversion
+            const glm::vec3 position = glm::vec3((ref.minAnchor + ref.maxAnchor) / 2.f, 0) +                        // anchor size
+                                       glm::vec3(glm::vec2(scale) / 2.f * (ref.pivot - glm::vec2(0.5f, 0.5f)), 0) + // pivot
+                                       ref.position * glm::vec3(canvasUnit, 1);                                     // position delta
+            const glm::quat rotation = ref.rotation;                                                                // no conversion
             // update matrix
             ref._modelMatrix = glm::translate(glm::mat4(1), position) * // position
                                glm::mat4_cast(ref.rotation) *           // rotation

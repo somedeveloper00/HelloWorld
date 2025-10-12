@@ -1,6 +1,7 @@
 #pragma once
 
 // clang-format off
+#include <cstdlib>
 #define GLM_FORCE_LEFT_HANDED
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE  
 #include <glad/gl.h>
@@ -12,10 +13,13 @@
 #include "engine/app.hpp"
 #include "errorHandling.hpp"
 #include "glm/fwd.hpp"
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <numbers>
 #include <thread>
 
 // #ifdef WIN32 // use high performance GPU
@@ -86,11 +90,17 @@ struct input final
         return getKeyState(key) == state::up;
     }
 
-    // 0,0 is top-left. max,max is bottom-right
+    static inline bool isMouseVisibility() noexcept;
+    static inline void setMouseVisibility(const bool visible) noexcept;
+
+    // 0,0 is center. top-right is positive
     static inline glm::ivec2 getMousePosition() noexcept
     {
         return s_mousePos;
     }
+
+    // 0,0 is center. top-right is positive
+    static inline void setMousePosition(const glm::ivec2 pos) noexcept;
 
     // returns whether mouse is within this window
     static inline bool isMouseInWindow() noexcept
@@ -98,18 +108,22 @@ struct input final
         return s_mouseInWindow;
     }
 
-    // 0,0 is center. max,max is top-right
-    static inline glm::ivec2 getMousePositionCentered() noexcept;
-
     // get the mouse wheel delta from the last frame
     static inline glm::vec2 getMouseWheelDelta() noexcept
     {
         return s_mouseWheelDelta;
     }
 
+    // returns mouse delta from last frame till this frame in pixel space. positive X is right and positive Y is up
+    static inline glm::ivec2 getMouseDelta() noexcept
+    {
+        return s_mouseDelta;
+    }
+
   private:
     static inline state s_states[static_cast<size_t>(key::count)];
     static inline glm::ivec2 s_mousePos;
+    static inline glm::ivec2 s_mouseDelta;
     static inline bool s_mouseInWindow = false;
     static inline glm::vec2 s_mouseWheelDelta;
 
@@ -118,7 +132,7 @@ struct input final
         static auto &s_downKeys = *new quickVector<size_t>();
         static auto &s_upKeys = *new quickVector<size_t>();
         static auto &s_repeatKeys = *new quickVector<size_t>();
-        static glm::vec2 s_scrollDelta{};
+        static glm::vec2 s_mouseWheelDeltaQueue{};
 
         glfwSetKeyCallback(window, [](GLFWwindow *window, int glfwKey, int scancode, int action, int mods) {
             auto key = static_cast<size_t>(glfwKeyToEngineKey_(glfwKey));
@@ -159,8 +173,7 @@ struct input final
             }
         });
         glfwSetScrollCallback(window, [](GLFWwindow *window, double xoffset, double yoffset) {
-            s_scrollDelta.x = xoffset;
-            s_scrollDelta.y = yoffset;
+            s_mouseWheelDeltaQueue = {xoffset, yoffset};
         });
         application::preComponentHooks.push_back([window]() {
             s_downKeys.forEach([](const auto &key) {
@@ -175,13 +188,9 @@ struct input final
             s_upKeys.forEachAndClear([](const auto &key) {
                 s_states[key] = state::up;
             });
-
-            static double x, y;
-            glfwGetCursorPos(window, &x, &y);
-            updateCursorPos(x, y);
-
-            s_mouseWheelDelta = s_scrollDelta;
-            s_scrollDelta.x = s_scrollDelta.y = 0;
+            s_mouseWheelDelta = s_mouseWheelDeltaQueue;
+            s_mouseWheelDeltaQueue = {};
+            updateMouseInfo();
         });
     }
 
@@ -645,7 +654,7 @@ struct input final
         }
     }
 
-    static inline void updateCursorPos(const double x, const double y);
+    static inline void updateMouseInfo();
 };
 
 struct graphics final
@@ -715,30 +724,6 @@ struct graphics final
     static inline glm::ivec2 getFrameBufferSize() noexcept
     {
         return s_frameBufferSize;
-    }
-
-    // sets mouse position relative to the top-right of the window
-    static inline void setMousePosition(const glm::ivec2 pos) noexcept
-    {
-        glfwSetCursorPos(s_window, pos.x, pos.y);
-        input::updateCursorPos(pos.x, pos.y);
-    }
-
-    // sets mouse position relative to the center of the window
-    static inline void setMousePositionCentered(const glm::ivec2 pos) noexcept
-    {
-        glfwSetCursorPos(s_window, s_frameBufferSize.x / 2.f + pos.x, s_frameBufferSize.y / 2.f + pos.y);
-        input::updateCursorPos(pos.x, pos.y);
-    }
-
-    static inline void setCursorVisibility(const bool visible) noexcept
-    {
-        glfwSetInputMode(s_window, GLFW_CURSOR, visible ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
-    }
-
-    static inline bool isCursorVisibility() noexcept
-    {
-        return glfwGetInputMode(s_window, GLFW_CURSOR) != GLFW_CURSOR_HIDDEN;
     }
 
     struct opengl final
@@ -1073,7 +1058,153 @@ struct graphics final
             onRendersMutex.unlock();
         }
 
-        // returns the vao for a square from -1 to 1 across x/y (no z axis). it has 2 triangles and 6 indices
+        // returns a basic flat shader's program
+        static inline GLuint getBasicFlatShader(GLuint &colorLocation, GLuint &modelMatrixLocation, GLuint &viewMatrixLocation, GLuint &projectionMatrixLocation)
+        {
+            const auto vertexSource = R"(
+            #version 460 core
+            layout(location = 0) in vec3 aPos;
+
+            uniform mat4 modelMatrix;
+            uniform mat4 viewMatrix;
+            uniform mat4 projectionMatrix;
+
+            void main()
+            {
+                gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.0);
+            }
+            )";
+            const auto fragmentSource = R"(
+            #version 460 core
+            uniform vec4 color;
+            out vec4 FragColor;
+
+            void main()
+            {
+                FragColor = color;
+            }
+            )";
+            static GLuint s_program = 0;
+            static GLuint s_colorLocation;
+            static GLuint s_modelMatrixLocation;
+            static GLuint s_viewMatrixLocation;
+            static GLuint s_projectionMatrixLocation;
+            if (!s_program)
+            {
+                s_program = fatalCreateProgram("basic flat", vertexSource, fragmentSource);
+                s_colorLocation = fatalGetLocation(s_program, "color");
+                s_modelMatrixLocation = fatalGetLocation(s_program, "modelMatrix");
+                s_viewMatrixLocation = fatalGetLocation(s_program, "viewMatrix");
+                s_projectionMatrixLocation = fatalGetLocation(s_program, "projectionMatrix");
+            }
+            colorLocation = s_colorLocation;
+            modelMatrixLocation = s_modelMatrixLocation;
+            viewMatrixLocation = s_viewMatrixLocation;
+            projectionMatrixLocation = s_projectionMatrixLocation;
+            return s_program;
+        }
+
+        // returns the vao for a capsule from -1 to 1 across x/y/z
+        // triangles: SideLineCount * 4
+        // indices: SideLineCount * 4 * 3
+        // vertices: SideLineCount * 2 + 2
+        template <size_t SideLineCount = 32>
+        static inline GLuint getCapsuleVao()
+        {
+            static GLuint s_vao = 0;
+            if (s_vao == 0)
+            {
+                using VertexData = std::array<float, 6 * (SideLineCount * 2 + 2)>;
+                using Indices = std::array<size_t, 3 * (SideLineCount * 4)>;
+                static constexpr VertexData vertexData = capsuleCreateVertexData_<SideLineCount>();
+                static constexpr Indices indices = capsuleCreateIndices_<SideLineCount>();
+                GLuint vbo, ebo;
+                glGenVertexArrays(1, &s_vao);
+                glGenBuffers(1, &vbo);
+                glGenBuffers(1, &ebo);
+
+                glBindVertexArray(s_vao);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData.data(), GL_STATIC_DRAW);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices.data(), GL_STATIC_DRAW);
+
+                // position
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, 0);
+                glEnableVertexAttribArray(1);
+                glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void *)(3 * sizeof(float)));
+
+                glBindVertexArray(0);
+            }
+            return s_vao;
+        }
+
+        // returns the vao for a cube from -1 to 1 across x/y/z
+        // triangles: 6 * 2
+        // indices: 6 * 2 * 3
+        // vertices: 8
+        static inline GLuint getCubeVao()
+        {
+            static GLuint s_vao = 0;
+            if (s_vao == 0)
+            {
+                static const float vertices[] = {
+                    // back
+                    -1, -1, -1,
+                    -1, 1, -1,
+                    1, 1, -1,
+                    1, -1, -1,
+                    // front
+                    -1, -1, 1,
+                    -1, 1, 1,
+                    1, 1, 1,
+                    1, -1, 1};
+                static const GLuint indices[] = {
+                    // back
+                    0, 1, 2,
+                    2, 3, 0,
+                    // front
+                    4, 5, 6,
+                    6, 7, 4,
+                    // top
+                    3, 2, 6,
+                    6, 7, 3,
+                    // bottom
+                    1, 0, 4,
+                    4, 5, 1,
+                    // right
+                    1, 2, 6,
+                    6, 5, 1,
+                    // left
+                    0, 3, 7,
+                    7, 4, 0};
+                GLuint vbo, ebo;
+                glGenVertexArrays(1, &s_vao);
+                glGenBuffers(1, &vbo);
+                glGenBuffers(1, &ebo);
+
+                glBindVertexArray(s_vao);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+                // position
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, 0);
+
+                glBindVertexArray(0);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+            }
+            return s_vao;
+        }
+
+        // returns the vao for a square from -1 to 1 across x/y (no z axis)
+        // triangles: 2
+        // indices: 6
+        // vertices: 4
         static inline GLuint getSquareVao()
         {
             static GLuint s_vao = 0;
@@ -1108,6 +1239,105 @@ struct graphics final
         }
 
       private:
+        // in order: top center, bottom center, bottom circle, top circle
+        template <size_t SideLineCount>
+        static consteval std::array<float, 6 * (SideLineCount * 2 + 2)> capsuleCreateVertexData_()
+        {
+            std::array<float, 6 * (SideLineCount * 2 + 2)> r;
+            constexpr size_t vertexCount = SideLineCount * 2 + 2;
+            auto setPosition = [&](size_t index, float x, float y, float z) {
+                r[index * 6 + 0] = x;
+                r[index * 6 + 1] = y;
+                r[index * 6 + 2] = z;
+            };
+            auto setNormal = [&](size_t index, float x, float y, float z) {
+                r[index * 6 + 3 + 0] = x;
+                r[index * 6 + 3 + 1] = y;
+                r[index * 6 + 3 + 2] = z;
+            };
+            // bottom vertex
+            setPosition(0, 0, -1, 0);
+            setNormal(0, 0, -1, 0);
+            // top vertex
+            setPosition(1, 0, 1, 0);
+            setNormal(1, 0, 1, 0);
+
+            auto indexToRadian = [](size_t index) {
+                return std::lerp(0, 2 * std::numbers::pi, (float)index / (float)SideLineCount);
+            };
+            // bottom circle
+            for (size_t i = 0; i < SideLineCount; i++)
+            {
+                setPosition(
+                    2 + i,
+                    constSin(indexToRadian(i)), // x
+                    -1,                         // y
+                    constCos(indexToRadian(i))  // z
+                );
+                setNormal(
+                    2 + i,
+                    constSin(indexToRadian(i)), // x
+                    0,                          // y
+                    constCos(indexToRadian(i))  // z
+                );
+            }
+            // top circle
+            for (size_t i = 0; i < SideLineCount; i++)
+            {
+                setPosition(
+                    2 + SideLineCount + i,
+                    constSin(indexToRadian(i)), // x
+                    1,                          // y
+                    constCos(indexToRadian(i))  // z
+                );
+                setNormal(
+                    2 + SideLineCount + i,
+                    constSin(indexToRadian(i)), // x
+                    0,                          // y
+                    constCos(indexToRadian(i))  // z
+                );
+            }
+            return r;
+        }
+
+        template <size_t SideLineCount>
+        static consteval std::array<size_t, 3 * (SideLineCount * 4)> capsuleCreateIndices_()
+        {
+            std::array<size_t, 3 * (SideLineCount * 4)> r;
+            size_t nextIndex = 0;
+            auto setTriangle = [&](size_t vert1, size_t vert2, size_t vert3) {
+                r[nextIndex++] = vert1;
+                r[nextIndex++] = vert2;
+                r[nextIndex++] = vert3;
+            };
+            auto getBottomVertexAtIndex = [&](size_t index) {
+                return 2 + index;
+            };
+            auto getTopVertexAtIndex = [&](size_t index) {
+                return 2 + SideLineCount + index;
+            };
+            // bottom circle
+            for (size_t i = 0; i < SideLineCount; i++)
+                setTriangle(0,
+                            getBottomVertexAtIndex(i),
+                            getBottomVertexAtIndex((i + 1) % SideLineCount));
+            // top circle
+            for (size_t i = 0; i < SideLineCount; i++)
+                setTriangle(1,
+                            getTopVertexAtIndex(i),
+                            getTopVertexAtIndex((i + 1) % SideLineCount));
+            // sides
+            for (size_t i = 0; i < SideLineCount; i++)
+                setTriangle(getBottomVertexAtIndex(i),
+                            getBottomVertexAtIndex((i + 1) % SideLineCount),
+                            getTopVertexAtIndex(i));
+            for (size_t i = 0; i < SideLineCount; i++)
+                setTriangle(getTopVertexAtIndex(i),
+                            getTopVertexAtIndex((i + 1) % SideLineCount),
+                            getBottomVertexAtIndex((i + 1) % SideLineCount));
+            return r;
+        }
+
         static inline void initialize_()
         {
             fatalAssert(gladLoadGL((GLADloadfunc)glfwGetProcAddress) != 0, "gladLoadGL failed");
@@ -1173,22 +1403,40 @@ inline input::state operator&(input::state a, input::state b) noexcept
     using underlying = std::underlying_type_t<input::state>;
     return static_cast<input::state>(static_cast<underlying>(a) & static_cast<underlying>(b));
 }
-inline void input::updateCursorPos(const double x, const double y)
+inline void input::updateMouseInfo()
 {
-    if (x >= 0 && x < graphics::s_frameBufferSize.x &&
-        y >= 0 && y < graphics::s_frameBufferSize.y)
-    {
-        input::s_mousePos.x = x;
-        input::s_mousePos.y = y;
-        input::s_mouseInWindow = true;
-    }
-    else
-        input::s_mouseInWindow = false;
-}
+    static double x, y;
+    glfwGetCursorPos(graphics::s_window, &x, &y);
 
-inline glm::ivec2 input::getMousePositionCentered() noexcept
+    // convert glfw (relative to window's top-left and negated Y) to human readable format (relative to window's center)
+    x -= graphics::s_frameBufferSize.x / 2;
+    y -= graphics::s_frameBufferSize.y / 2;
+    y *= -1;
+
+    const glm::ivec2 newMousePos = {x, y};
+    s_mouseDelta = newMousePos - s_mousePos;
+    s_mousePos = newMousePos;
+    s_mouseInWindow = s_mousePos.x > -graphics::s_frameBufferSize.x / 2 && s_mousePos.x < graphics::s_frameBufferSize.x / 2 &&
+                      s_mousePos.y > -graphics::s_frameBufferSize.y / 2 && s_mousePos.y < graphics::s_frameBufferSize.y / 2;
+}
+inline void input::setMousePosition(glm::ivec2 pos) noexcept
 {
-    return {s_mousePos.x - graphics::getFrameBufferSize().x / 2, -s_mousePos.y + graphics::getFrameBufferSize().y / 2};
+    // convert human readable format (relative to window's center) to glfw (relative to window's top-left and negated Y)
+    glfwSetCursorPos(graphics::s_window,
+                     pos.x + graphics::s_frameBufferSize.x / 2,
+                     -pos.y + graphics::s_frameBufferSize.y / 2);
+    s_mouseDelta = pos - s_mousePos;
+    s_mousePos = pos;
+    s_mouseInWindow = s_mousePos.x > -graphics::s_frameBufferSize.x / 2 && s_mousePos.x < graphics::s_frameBufferSize.x / 2 &&
+                      s_mousePos.y > -graphics::s_frameBufferSize.y / 2 && s_mousePos.y < graphics::s_frameBufferSize.y / 2;
+}
+inline void input::setMouseVisibility(const bool visible) noexcept
+{
+    glfwSetInputMode(graphics::s_window, GLFW_CURSOR, visible ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
+}
+inline bool input::isMouseVisibility() noexcept
+{
+    return glfwGetInputMode(graphics::s_window, GLFW_CURSOR) != GLFW_CURSOR_HIDDEN;
 }
 } // namespace engine
 #endif

@@ -15,7 +15,7 @@ static inline void fatalAssert(bool condition, const char *const msg)
     {
         log::logError(msg);
 #ifdef DEBUG
-        assert(false);
+       assert(false);
 #elif _WIN32
         MessageBox(NULL, msg, "Fatal Error", MB_OK | MB_ICONERROR);
         exit(-1);

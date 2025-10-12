@@ -8,9 +8,8 @@
 #include "engine/components/transform.hpp"
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
+#include "engine/worldGrid.hpp"
 #include "fpsMoveAround.hpp"
-#include "glm/gtc/quaternion.hpp"
-#include "glm/trigonometric.hpp"
 #include <cmath>
 #include <string>
 
@@ -18,26 +17,27 @@ int main()
 {
     __itt_pause();
     engine::log::initialize();
-    engine::graphics::initialize("Hello Enigne!", {100, 100}, {400, 200}, false, false, engine::graphics::renderer::opengl);
+    engine::graphics::initialize("Hello Enigne!", {100, 100}, {800, 600}, false, false, engine::graphics::renderer::opengl);
+    engine::worldGridSystem::initialize();
     engine::graphics::opengl::debugModeContext _;
     initializeDebugShortcuts();
     // engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
     auto camera = engine::entity::create("camera");
     camera->addComponent<engine::camera>();
     camera->addComponent<fpsMoveAround>();
+    camera->getComponent<engine::transform>()->position = {0, 1, -1};
 
     auto canvasEntity = engine::entity::create("main canvas");
-    canvasEntity->addComponent<engine::ui::canvas>();
-    canvasEntity->getComponent<engine::ui::canvas>()->positionType = engine::ui::canvas::positionType::world;
-    canvasEntity->getComponent<engine::ui::canvas>()->positionProperties.world.unitScale = {0.01f, 0.01f};
+    canvasEntity->addComponent<engine::ui::canvas>(engine::ui::canvas::positionType::world);
+    // canvasEntity->getComponent<engine::ui::canvas>()->positionProperties.world.unitScale = {0.01f, 0.01f};
     // canvasEntity->getComponent<engine::ui::canvas>()->positionProperties.fullScreen.distanceFromNearClip = {0.01f, 0.01f};
     canvasEntity->getComponent<engine::transform>()->position.z = 2;
-    auto child = engine::entity::create("fill");
+    auto fill = engine::entity::create("fill");
     {
-        child->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
-        child->setParent(canvasEntity);
-        child->getComponent<engine::ui::uiTransform>()->minAnchor = {0, 0};
-        child->getComponent<engine::ui::uiTransform>()->maxAnchor = {1, 1};
+        fill->addComponent<engine::ui::uiImage>()->color = {1, 1, 1, 1};
+        fill->setParent(canvasEntity);
+        fill->getComponent<engine::ui::uiTransform>()->minAnchor = {0, 0};
+        fill->getComponent<engine::ui::uiTransform>()->maxAnchor = {1, 1};
     }
     auto rightCorner = engine::entity::create("right corner");
     {
@@ -46,7 +46,7 @@ int main()
         rightCorner->getComponent<engine::ui::uiTransform>()->minAnchor = {0.5f, 0};
         rightCorner->getComponent<engine::ui::uiTransform>()->maxAnchor = {1, 1};
         // rightCorner->getComponent<engine::ui::uiTransform>()->deltaSize = {10, 10};
-        // rightCorner->getComponent<engine::ui::uiTransform>()->pivot = {1, 1};
+        rightCorner->getComponent<engine::ui::uiTransform>()->pivot = {1, 1};
         rightCorner->getComponent<engine::ui::uiTransform>()->position.z -= 0.001f;
     }
     engine::application::postComponentHooks.push_back([&]() {

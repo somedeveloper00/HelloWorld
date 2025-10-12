@@ -5,7 +5,6 @@
 #include "engine/components/transform.hpp"
 #include "engine/window.hpp"
 #include "glm/fwd.hpp"
-#include "glm/geometric.hpp"
 #include "glm/trigonometric.hpp"
 
 // moves transform in a FPS
@@ -14,12 +13,13 @@ struct fpsMoveAround : public engine::component
     createTypeInformation(fpsMoveAround, component);
 
     float speed = 7.f;
-    float lookSpeed = 100.f;
+    float lookSpeed = .1f;
     float fovChangeRate = .1f;
 
   private:
     float yaw = 0;
     float pitch = 0;
+    bool rotating = false;
 
     void update_() override
     {
@@ -45,24 +45,18 @@ struct fpsMoveAround : public engine::component
         if (engine::input::isKeyHeldDown(engine::input::key::q))
             transform->position -= transform->getUp() * speed * engine::time::getDeltaTime();
 
-        if (engine::input::isKeyHeldDown(engine::input::key::mouseRight))
+        if (engine::input::isMouseInWindow() && engine::input::isKeyHeldDown(engine::input::key::mouseRight))
         {
-            engine::graphics::setCursorVisibility(false);
             // rotate
-            const auto mouseDelta = static_cast<glm::vec2>(engine::input::getMousePositionCentered()) /
-                                    static_cast<glm::vec2>(engine::graphics::getFrameBufferSize());
-            engine::graphics::setMousePositionCentered({0, 0});
-            if (glm::length(mouseDelta) > 0.4f)
-                return;
+            const auto mouseDelta = engine::input::getMouseDelta();
             pitch = getLockedPitch(pitch - lookSpeed * mouseDelta.y);
             yaw += lookSpeed * mouseDelta.x;
+            engine::input::setMouseVisibility(false);
+            engine::input::setMousePosition({0, 0});
         }
         else
-            engine::graphics::setCursorVisibility(true);
-        transform->rotation = glm::quat(glm::vec3(
-            glm::radians(pitch),
-            glm::radians(yaw),
-            0));
+            engine::input::setMouseVisibility(true);
+        transform->rotation = glm::quat(glm::vec3(glm::radians(pitch), glm::radians(yaw), 0));
 
         // field of view change
         if (engine::camera *camera = getEntity()->getComponent<engine::camera>())

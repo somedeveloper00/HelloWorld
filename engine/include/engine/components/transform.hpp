@@ -18,17 +18,25 @@ struct transform : public component
     glm::vec3 scale{1.f, 1.f, 1.f};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
 
-    glm::vec3 getForward() const
+    glm::vec3 getWorldPosition() noexcept
+    {
+        if (_isWorldPositionCacheValid)
+            return _worldPositionCached;
+        _isWorldPositionCacheValid = true;
+        return (_worldPositionCached = _modelGlobalMatrix * glm::vec4{0, 0, 0, 1.f});
+    }
+
+    glm::vec3 getForward() const noexcept
     {
         return rotation * glm::vec3(0.f, 0.f, 1.f);
     }
 
-    glm::vec3 getUp() const
+    glm::vec3 getUp() const noexcept
     {
         return rotation * glm::vec3(0.f, 1.f, 0.f);
     }
 
-    glm::vec3 getRight() const
+    glm::vec3 getRight() const noexcept
     {
         return rotation * glm::vec3(1.f, 0.f, 0.f);
     }
@@ -56,6 +64,8 @@ struct transform : public component
   protected:
     glm::mat4 _modelMatrix;
     glm::mat4 _modelGlobalMatrix;
+    glm::vec3 _worldPositionCached;
+    bool _isWorldPositionCacheValid;
     bool _isDirty = true;
 
     // set this to false to override matrix multiplication
@@ -94,6 +104,7 @@ struct transform : public component
                 transformRef._modelMatrix = translateMatrix * rotationMatrix * scaleMatrix;
                 transformRef._modelGlobalMatrix = parentModelGlobalMatrix = parentModelGlobalMatrix * transformRef._modelMatrix;
                 transformRef._isDirty = false;
+                transformRef._isWorldPositionCacheValid = false;
                 parentDirty = true;
             }
             else if (parentDirty)

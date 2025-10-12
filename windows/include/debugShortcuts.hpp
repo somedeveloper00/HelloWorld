@@ -46,9 +46,9 @@ static inline void tick_()
     static auto createRandomHugeCount = 1000000;
     static auto deleteRandomCount = 5;
 
-    engine::graphics::clearColor.r = sin(engine::time::getTotalTime()) * sin(engine::time::getTotalTime());
-    engine::graphics::clearColor.g = cos(2 * engine::time::getTotalTime()) * cos(2 * engine::time::getTotalTime());
-    engine::graphics::clearColor.b = engine::time::getTotalTime() - (float)(int)engine::time::getTotalTime();
+    // engine::graphics::clearColor.r = sin(engine::time::getTotalTime()) * sin(engine::time::getTotalTime());
+    // engine::graphics::clearColor.g = cos(2 * engine::time::getTotalTime()) * cos(2 * engine::time::getTotalTime());
+    // engine::graphics::clearColor.b = engine::time::getTotalTime() - (float)(int)engine::time::getTotalTime();
 
     if (engine::input::isKeyJustDown(close))
     {
@@ -129,5 +129,6 @@ static inline void tick_()
 
 static inline void initializeDebugShortcuts()
 {
+    engine::graphics::clearColor = {0, 0, 0, 1};
     engine::application::preComponentHooks.push_back(tick_);
 }

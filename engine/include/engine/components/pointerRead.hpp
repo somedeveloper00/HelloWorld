@@ -199,7 +199,7 @@ struct pointerRead : public component
                     glBindVertexArray(0);
 
                     // update objects
-                    auto mousePos = input::getMousePosition();
+                    auto mousePos = input::getMousePosition() + (graphics::getFrameBufferSize() / 2);
                     fatalAssert(mousePos.x >= 0 && mousePos.y >= 0 && mousePos.x < graphics::getFrameBufferSize().x && mousePos.y < graphics::getFrameBufferSize().y, "mouse position outside of window");
                     const auto ind =
                         (graphics::getFrameBufferSize().y - mousePos.y - 1) // -1 to avoid false readPixels on the top-most row pixels

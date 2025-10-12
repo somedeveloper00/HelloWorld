@@ -91,7 +91,7 @@ struct camera : public component
     }
 
     // updates the given transform such that it fills the viewport of this camera. also handles dirtying the given transform
-    void setTransformAcrossViewPort(transform *transform, const float distanceFromNearClip) const
+    void setTransformAcrossViewPortAndMarkDirty(transform *transform, const float distanceFromNearClip) const
     {
         // position
         const auto pos = _transform->position + _transform->getForward() * (_nearPlane + distanceFromNearClip);

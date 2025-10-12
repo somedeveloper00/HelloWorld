@@ -5,6 +5,47 @@
 #include <string>
 #include <type_traits>
 
+// a constexpr sin
+template <typename Value, size_t Terms = 10>
+consteval Value constSin(Value x)
+{
+    Value result = 0;
+    Value power = x;
+    Value factorial = 1;
+    int sign = 1;
+
+    for (int n = 0; n < Terms; ++n)
+    {
+        result += sign * power / factorial;
+        sign = -sign;
+        int k = 2 * n + 2;
+        power *= x * x;
+        factorial *= k * (k + 1);
+    }
+    return result;
+}
+
+// a constexpr cosine
+template <typename Value, size_t Terms = 10>
+consteval Value constCos(Value x)
+{
+    Value result = 0;
+    Value power = 1; // x^0
+    Value factorial = 1;
+    int sign = 1;
+
+    for (int n = 0; n < Terms; ++n)
+    {
+        result += sign * power / factorial;
+        sign = -sign;
+        int k = 2 * n + 1;
+        int l = 2 * n + 2;
+        power *= x * x;
+        factorial *= k * l;
+    }
+    return result;
+}
+
 static constexpr size_t fnv1a_64_(const char *s, size_t count)
 {
     size_t hash = 0xcbf29ce484222325ULL;
