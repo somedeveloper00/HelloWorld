@@ -1,4 +1,5 @@
 // clang-format off
+#include "engine/data.hpp"
 #include "engine/window.hpp"
 // clang-format on
 
@@ -8,6 +9,7 @@
 #include "engine/components/transform.hpp"
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
+#include "engine/components/ui/uiImageButton.hpp"
 #include "engine/worldGrid.hpp"
 #include "fpsMoveAround.hpp"
 #include <cmath>
@@ -42,7 +44,7 @@ int main()
     auto rightCorner = engine::entity::create("right corner");
     {
         rightCorner->setParent(canvasEntity);
-        rightCorner->addComponent<engine::ui::uiImage>()->color = {1, 0, 0, 1};
+        rightCorner->ensureComponentExists<engine::ui::uiImageButton>(engine::color{1, 0, 0, 1});
         rightCorner->getComponent<engine::ui::uiTransform>()->minAnchor = {0.5f, 0};
         rightCorner->getComponent<engine::ui::uiTransform>()->maxAnchor = {1, 1};
         // rightCorner->getComponent<engine::ui::uiTransform>()->deltaSize = {10, 10};

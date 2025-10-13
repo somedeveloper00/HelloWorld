@@ -268,7 +268,7 @@ struct entity
     weakRef<T> ensureComponentExists(Args &&...args)
     {
         assertComponentTypeValidity_<T>();
-        if (auto r = getComponent<T>(args...))
+        if (auto r = getComponent<T>())
             return r;
         return addComponent<T>(args...);
     }

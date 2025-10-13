@@ -31,6 +31,11 @@ struct color final
         return std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b) + " " + std::to_string(a);
     }
 
+    color createVariant(const float multiplier, const float alpha) const noexcept
+    {
+        return {r * multiplier, g * multiplier, b * multiplier, alpha};
+    }
+
     // lerps fast with SIMD and FMA
     void lerp(const color other, const float t) noexcept
     {

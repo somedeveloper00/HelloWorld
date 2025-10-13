@@ -26,6 +26,14 @@ struct uiImageButton : public uiButton
     // rate of color change per second (color range is 0-1, so change rate of 1 means it at worse takes 1 second to switch color)
     float colorSwitchSpeed = 20;
 
+    uiImageButton(const color color = {1, 1, 1, 1})
+        : idleColor(color),
+          selectedColor(color.createVariant(0.9f, 1.f)),
+          pressedColor(color.createVariant(0.5f, 1.f)),
+          disabledColor(color.createVariant(0.9f, 0.5f))
+    {
+    }
+
     createTypeInformation(uiImageButton, uiButton);
 
   protected:
@@ -35,9 +43,9 @@ struct uiImageButton : public uiButton
 
     bool created_() override
     {
-        initialize_();
         if (!uiButton::created_())
             return false;
+        initialize_();
         s_instances.push_back(this);
         if (graphics::getRenderer() == graphics::opengl)
             _pointerRead->setVertices(graphics::opengl::getSquareVao(), 6);

@@ -106,10 +106,12 @@ struct pointerRead : public component
     // IDs of the last frame's screen. rows first
     static inline quickVector<idType> s_screenIds;
 
-    static inline GLuint s_screenIdMapTexture = 0, s_screenIdMapFrameBuffer = 0, s_screenIdMapDepthBuffer = 0;
+    static inline GLuint s_screenIdMapTexture = 0, s_screenIdMapFrameBuffer = 0, s_screenIdMapDepthBuffer = 0, s_screenIdMapPbo = 0;
 
     // ID of the last object under the pointer (in the last frame). can be invalid
     static inline idType s_lastPointedId = invalidId;
+
+    static inline bool s_readBackInProgress = false;
 
     // ID and index of this instance in the s_id2Object
     idType _id;
@@ -144,22 +146,27 @@ struct pointerRead : public component
             }
             )";
 
-            // shader
-            static const auto s_program = graphics::opengl::fatalCreateProgram("pointerRead", vertexShader, fragmentShader);
-            static GLint s_modelMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "modelMatrix");
-            static GLint s_viewMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "viewMatrix");
-            static GLint s_projectionMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "projectionMatrix");
-            static GLint s_idLocation = graphics::opengl::fatalGetLocation(s_program, "id");
-            static GLuint s_pbo = graphics::opengl::newPbo(sizeof(idType));
-            static bool s_readBackInProgress = false;
+            static GLuint s_program;
+            static GLint s_modelMatrixLocation;
+            static GLint s_viewMatrixLocation;
+            static GLint s_projectionMatrixLocation;
+            static GLint s_idLocation;
 
-            application::postComponentHooks.push_back([]() {
+            // prepare data
+            s_program = graphics::opengl::fatalCreateProgram("pointerRead", vertexShader, fragmentShader);
+            s_modelMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "modelMatrix");
+            s_viewMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "viewMatrix");
+            s_projectionMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "projectionMatrix");
+            s_idLocation = graphics::opengl::fatalGetLocation(s_program, "id");
+            s_screenIdMapPbo = graphics::opengl::newPbo(sizeof(idType));
+
+            application::postComponentHooks.push_back([&]() {
                 bench("update screen object ids");
                 if (s_readBackInProgress)
                 {
                     bench("read back");
 
-                    glBindBuffer(GL_PIXEL_PACK_BUFFER, s_pbo);
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, s_screenIdMapPbo);
                     void *ptr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
                     if (!ptr)
                     {
@@ -218,7 +225,7 @@ struct pointerRead : public component
                         glUseProgram(s_program);
                         glUniformMatrix4fv(s_viewMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getViewMatrix()));
                         glUniformMatrix4fv(s_projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getProjectionMatrix()));
-                        s_id2Object.forEachIndexed([](const size_t index, const entry &entry) {
+                        s_id2Object.forEachIndexed([&](const size_t index, const entry &entry) {
                             if (entry.vao)
                             {
                                 glBindVertexArray(entry.vao);
@@ -234,7 +241,7 @@ struct pointerRead : public component
                         fatalAssert(mousePos.x >= 0 && mousePos.y >= 0 && mousePos.x < graphics::getFrameBufferSize().x && mousePos.y < graphics::getFrameBufferSize().y, "mouse position outside of window");
 
                         // read back
-                        glBindBuffer(GL_PIXEL_PACK_BUFFER, s_pbo);
+                        glBindBuffer(GL_PIXEL_PACK_BUFFER, s_screenIdMapPbo);
                         glReadBuffer(GL_COLOR_ATTACHMENT0);
                         glReadPixels(mousePos.x, mousePos.y, 1, 1, GL_RED_INTEGER, GL_UNSIGNED_INT, 0); // async read back
 
@@ -272,8 +279,15 @@ struct pointerRead : public component
     // deletes/updates buffers (both for CPU-side and GPU-side)
     static inline void updateScreenIdsBuffer_()
     {
-        const auto bufferSize = graphics::getFrameBufferSize();
+        // handle pbo
+        s_readBackInProgress = false;
+        if (s_screenIdMapPbo)
+        {
+            glDeleteBuffers(1, &s_screenIdMapPbo);
+            s_screenIdMapPbo = graphics::opengl::newPbo(sizeof(idType));
+        }
 
+        const auto bufferSize = graphics::getFrameBufferSize();
         s_screenIds.reserve(bufferSize.x * bufferSize.y);
         s_screenIds.setSize(s_screenIds.getCapacity());
 

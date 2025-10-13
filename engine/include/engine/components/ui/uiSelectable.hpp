@@ -49,13 +49,13 @@ struct uiSelectable : public component
 
     bool created_() override
     {
-        initialize_();
         disallowMultipleComponents(uiSelectable);
-        _uiSelectableWeakRef = getWeakRefAs<uiSelectable>();
         if (!(_uiTransform = getEntity()->ensureComponentExists<uiTransform>()))
             return false;
         if (!(_pointerRead = getEntity()->ensureComponentExists<pointerRead>()))
             return false;
+        initialize_();
+        _uiSelectableWeakRef = getWeakRefAs<uiSelectable>();
         _uiTransform->pushLock();
         _pointerRead->pushLock();
         _pointerRead->onPointerEnter.push_back(_onPointerEnterLambda = [this]() {

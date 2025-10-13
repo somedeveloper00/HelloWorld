@@ -20,6 +20,8 @@ struct fpsMoveAround : public engine::component
     float yaw = 0;
     float pitch = 0;
     bool rotating = false;
+    glm::ivec2 _mousePosWhenRotationStarted;
+    bool _isRotating = false;
 
     void update_() override
     {
@@ -47,15 +49,24 @@ struct fpsMoveAround : public engine::component
 
         if (engine::input::isMouseInWindow() && engine::input::isKeyHeldDown(engine::input::key::mouseRight))
         {
+            if (!_isRotating)
+            {
+                _isRotating = true;
+                _mousePosWhenRotationStarted = engine::input::getMousePosition();
+            }
+
             // rotate
             const auto mouseDelta = engine::input::getMouseDelta();
             pitch = getLockedPitch(pitch - lookSpeed * mouseDelta.y);
             yaw += lookSpeed * mouseDelta.x;
             engine::input::setMouseVisibility(false);
-            engine::input::setMousePosition({0, 0});
+            engine::input::setMousePosition(_mousePosWhenRotationStarted);
         }
         else
+        {
             engine::input::setMouseVisibility(true);
+            _isRotating = false;
+        }
         transform->rotation = glm::quat(glm::vec3(glm::radians(pitch), glm::radians(yaw), 0));
 
         // field of view change

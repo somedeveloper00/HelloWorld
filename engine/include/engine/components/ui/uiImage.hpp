@@ -73,12 +73,18 @@ struct uiImage : public component
             }
             )";
 
+            static GLuint program;
+            static GLint modelMatrixLocation;
+            static GLint viewMatrixLocation;
+            static GLint projectionMatrixLocation;
+            static GLint colorLocation;
+            
             // make program data ready
-            static GLuint program = graphics::opengl::fatalCreateProgram("uiImage", vertexShader, fragmentShader);
-            static GLint modelMatrixLocation = graphics::opengl::fatalGetLocation(program, "modelMatrix");
-            static GLint viewMatrixLocation = graphics::opengl::fatalGetLocation(program, "viewMatrix");
-            static GLint projectionMatrixLocation = graphics::opengl::fatalGetLocation(program, "projectionMatrix");
-            static GLint colorLocation = graphics::opengl::fatalGetLocation(program, "color");
+            program = graphics::opengl::fatalCreateProgram("uiImage", vertexShader, fragmentShader);
+            modelMatrixLocation = graphics::opengl::fatalGetLocation(program, "modelMatrix");
+            viewMatrixLocation = graphics::opengl::fatalGetLocation(program, "viewMatrix");
+            projectionMatrixLocation = graphics::opengl::fatalGetLocation(program, "projectionMatrix");
+            colorLocation = graphics::opengl::fatalGetLocation(program, "color");
             s_vao = graphics::opengl::getSquareVao();
 
             graphics::opengl::addRendererHook(1, []() {
@@ -96,7 +102,7 @@ struct uiImage : public component
                 glUseProgram(program);
                 glUniformMatrix4fv(viewMatrixLocation, 1, GL_FALSE, glm::value_ptr(viewMatrix));
                 glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(projectionMatrix));
-                s_instances.forEach([](const uiImage *instance) {
+                s_instances.forEach([&](const uiImage *instance) {
                     const auto &matrix = instance->_uiTransform->getGlobalMatrix();
                     const auto &color = instance->color;
                     glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(matrix));
