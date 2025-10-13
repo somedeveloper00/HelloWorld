@@ -33,6 +33,12 @@ struct benchmark final
 #ifndef DEPLOY
 #ifdef TRACY_ENABLE
 #define bench(label) ZoneScopedN(label);
+// exeuctes the code inside a hidden scope. useful for oneliner benchmarks
+#define benchCode(label, Code) \
+    {                          \
+        ZoneScopedN(label);    \
+        Code;                  \
+    };
 #else
 #define bench(label)                                                         \
     static auto *s_vtuneLabel##__LINE__ = __itt_string_handle_create(label); \

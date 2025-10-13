@@ -721,7 +721,7 @@ struct graphics final
     }
 
     // get frame buffer size
-    static inline const glm::ivec2& getFrameBufferSize() noexcept
+    static inline const glm::ivec2 &getFrameBufferSize() noexcept
     {
         return s_frameBufferSize;
     }
@@ -957,6 +957,19 @@ struct graphics final
             if (!program)
                 fatalAssert(false, ("could not create opengl program for \"" + std::string(debugName) + "\"").c_str());
             return program;
+        }
+
+        // just a shortcut to creating a new PBO (pixel pack buffer object)
+        template <bool UnbindAtEnd = true>
+        static inline GLuint newPbo(const size_t size = 1, const void *data = nullptr)
+        {
+            GLuint buffer;
+            glGenBuffers(1, &buffer);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, buffer);
+            glBufferData(GL_PIXEL_PACK_BUFFER, size, data, GL_STREAM_READ);
+            if constexpr (UnbindAtEnd)
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            return buffer;
         }
 
         // compiles the source vertex shader and the source fragment shader, links them to a program and returns the program, or 0/GL_FALSE if failed

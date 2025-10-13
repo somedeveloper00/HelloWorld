@@ -534,7 +534,7 @@ struct application
 // executes a copy of the hooks' vector
 #define executeHooks(hooks)                             \
     {                                                   \
-        bench("hooks");                                 \
+        bench(#hooks);                                  \
         const auto copy = hooks;                        \
         copy.forEach([](const auto &func) { func(); }); \
     }
@@ -611,6 +611,7 @@ struct application
 
         executeHooks(onExitHooks);
     }
+#undef executeHooks
 
     // thread-safe. exists the application after the current frame is finished
     static inline void close()

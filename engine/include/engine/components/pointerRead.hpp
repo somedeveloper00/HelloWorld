@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/app.hpp"
+#include "engine/benchmark.hpp"
 #include "engine/components/camera.hpp"
 #include "engine/components/transform.hpp"
 #include "engine/quickVector.hpp"
@@ -149,52 +150,29 @@ struct pointerRead : public component
             static GLint s_viewMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "viewMatrix");
             static GLint s_projectionMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "projectionMatrix");
             static GLint s_idLocation = graphics::opengl::fatalGetLocation(s_program, "id");
+            static GLuint s_pbo = graphics::opengl::newPbo(sizeof(idType));
+            static bool s_readBackInProgress = false;
 
-            application::preComponentHooks.push_back([]() {
+            application::postComponentHooks.push_back([]() {
                 bench("update screen object ids");
-                if (input::isMouseInWindow())
+                if (s_readBackInProgress)
                 {
-                    camera *camera = camera::getMainCamera();
-                    if (!camera)
+                    bench("read back");
+
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, s_pbo);
+                    void *ptr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+                    if (!ptr)
+                    {
+                        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
                         return;
-
-                    // update model matrices
-                    s_id2Object.forEachParallel([](entry &entry) {
-                        entry.modelMatrix = entry.instance->_transform->getGlobalMatrix();
-                    });
-
-                    // render to frame buffer
-                    graphics::opengl::noBlendContext _; // disable blending (RAII)
-                    glBindFramebuffer(GL_FRAMEBUFFER, s_screenIdMapFrameBuffer);
-                    glClearColor(0, 0, 0, 0);
-                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                    glUseProgram(s_program);
-                    glUniformMatrix4fv(s_viewMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getViewMatrix()));
-                    glUniformMatrix4fv(s_projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getProjectionMatrix()));
-                    s_id2Object.forEachIndexed([](const size_t index, const entry &entry) {
-                        if (entry.vao)
-                        {
-                            glBindVertexArray(entry.vao);
-                            glUniformMatrix4fv(s_modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(entry.modelMatrix));
-                            glUniform1ui(s_idLocation, index + 1); // 0 is clear color
-                            glDrawElements(GL_TRIANGLES, entry.verticesCount, GL_UNSIGNED_INT, 0);
-                        }
-                    });
-
-                    // read back
-                    const auto &frameBufferSize = graphics::getFrameBufferSize();
-                    glReadBuffer(GL_COLOR_ATTACHMENT0);
-                    glReadPixels(0, 0, frameBufferSize.x, frameBufferSize.y, GL_RED_INTEGER, GL_UNSIGNED_INT, s_screenIds.data());
-
-                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                    glBindVertexArray(0);
-                    glUseProgram(0);
+                    }
+                    idType newPointedId = *static_cast<idType *>(ptr);
+                    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                    s_readBackInProgress = false;
 
                     // update objects
-                    auto mousePos = input::getMousePosition() + (graphics::getFrameBufferSize() / 2); // convert to opengl conventions
-                    fatalAssert(mousePos.x >= 0 && mousePos.y >= 0 && mousePos.x < graphics::getFrameBufferSize().x && mousePos.y < graphics::getFrameBufferSize().y, "mouse position outside of window");
-                    const auto ind = mousePos.y * frameBufferSize.x + mousePos.x;
-                    const idType newPointedId = s_screenIds[ind];
                     if (newPointedId == s_lastPointedId)
                         return;
                     if (newPointedId > s_id2Object.size())
@@ -205,26 +183,80 @@ struct pointerRead : public component
                     // call onPointerExit
                     if (s_lastPointedId != invalidId)
                     {
+                        bench("onPointerExit");
                         const auto callback = s_id2Object[s_lastPointedId - 1].instance->onPointerExit;
                         callback.forEach([](const auto &func) { func(); });
                     }
                     // call onPointerEnter
                     if (newPointedId != invalidId)
                     {
+                        bench("onPointerEnter");
                         const auto callback = s_id2Object[newPointedId - 1].instance->onPointerEnter;
                         callback.forEach([](const auto &func) { func(); });
                     }
                     s_lastPointedId = newPointedId;
                 }
-                else // mouse not in window
+                else
                 {
-                    // call onPointerExit
-                    if (s_lastPointedId != invalidId)
+                    if (input::isMouseInWindow())
                     {
-                        const auto callback = s_id2Object[s_lastPointedId - 1].instance->onPointerExit;
-                        callback.forEach([](const auto &func) { func(); });
+                        bench("rendering");
+                        camera *camera = camera::getMainCamera();
+                        if (!camera)
+                            return;
+
+                        // update model matrices
+                        s_id2Object.forEachParallel([](entry &entry) {
+                            entry.modelMatrix = entry.instance->_transform->getGlobalMatrix();
+                        });
+
+                        // render to frame buffer
+                        graphics::opengl::noBlendContext _; // disable blending (RAII)
+                        glBindFramebuffer(GL_FRAMEBUFFER, s_screenIdMapFrameBuffer);
+                        glClearColor(0, 0, 0, 0);
+                        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                        glUseProgram(s_program);
+                        glUniformMatrix4fv(s_viewMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getViewMatrix()));
+                        glUniformMatrix4fv(s_projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getProjectionMatrix()));
+                        s_id2Object.forEachIndexed([](const size_t index, const entry &entry) {
+                            if (entry.vao)
+                            {
+                                glBindVertexArray(entry.vao);
+                                glUniformMatrix4fv(s_modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(entry.modelMatrix));
+                                glUniform1ui(s_idLocation, index + 1); // 0 is clear color
+                                glDrawElements(GL_TRIANGLES, entry.verticesCount, GL_UNSIGNED_INT, 0);
+                            }
+                        });
+
+                        // prepare data for read back
+                        const auto &frameBufferSize = graphics::getFrameBufferSize();
+                        auto mousePos = input::getMousePosition() + (graphics::getFrameBufferSize() / 2); // convert to opengl conventions
+                        fatalAssert(mousePos.x >= 0 && mousePos.y >= 0 && mousePos.x < graphics::getFrameBufferSize().x && mousePos.y < graphics::getFrameBufferSize().y, "mouse position outside of window");
+
+                        // read back
+                        glBindBuffer(GL_PIXEL_PACK_BUFFER, s_pbo);
+                        glReadBuffer(GL_COLOR_ATTACHMENT0);
+                        glReadPixels(mousePos.x, mousePos.y, 1, 1, GL_RED_INTEGER, GL_UNSIGNED_INT, 0); // async read back
+
+                        // unbind
+                        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                        glBindVertexArray(0);
+                        glUseProgram(0);
+
+                        s_readBackInProgress = true;
                     }
-                    s_lastPointedId = invalidId;
+                    else // mouse not in window
+                    {
+                        // call onPointerExit
+                        if (s_lastPointedId != invalidId)
+                        {
+                            bench("onPointerExit");
+                            const auto callback = s_id2Object[s_lastPointedId - 1].instance->onPointerExit;
+                            callback.forEach([](const auto &func) { func(); });
+                        }
+                        s_lastPointedId = invalidId;
+                    }
                 }
             });
 
