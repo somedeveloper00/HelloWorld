@@ -20,8 +20,7 @@ inline constexpr bool isDebugMode()
 
 namespace engine
 {
-// A simple vector implementation like std::vector but without iterators and without default initialization of
-// data
+// A simple vector implementation like std::vector but without iterators and without default initialization of data
 template <typename T, float Increment = 2.f, typename Alloc = alloc<T>, bool DebugChecks = isDebugMode()>
 struct quickVector
 {
@@ -214,11 +213,34 @@ struct quickVector
         _size--;
     }
 
+    T pop_back_get()
+    {
+        assertDuringForEach();
+        assertRange_(0);
+        T data = std::move(_data[_size - 1]);
+        destructItem_(_data[_size - 1]); // might not be necessary but just in case
+        _size--;
+        return data;
+    }
+
+    const size_t &getCapacity() const noexcept
+    {
+        return _capacity;
+    }
+
     void reserve(const size_t capacity)
     {
         assertDuringForEach();
         if (capacity > _capacity)
             realloc_(capacity);
+    }
+
+    void setSize(const size_t size)
+    {
+        assertDuringForEach();
+        if constexpr (DebugChecks)
+            fatalAssert(size <= _capacity, "cannot set the size to a value greater than the vector's capacity");
+        _size = size;
     }
 
     template <typename Value>
@@ -325,6 +347,7 @@ struct quickVector
             _duringForEach.value = false;
     }
 
+    // 0: index as size_t, 1: item
     template <typename Func>
     void forEachIndexed(Func &&func)
     {

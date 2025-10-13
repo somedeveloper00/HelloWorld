@@ -6,7 +6,6 @@
 #include "engine/quickVector.hpp"
 #include "engine/window.hpp"
 #include "glm/ext/matrix_transform.hpp"
-#include "glm/ext/vector_relational.hpp"
 #include "glm/fwd.hpp"
 #include "glm/gtc/quaternion.hpp"
 #include <algorithm>

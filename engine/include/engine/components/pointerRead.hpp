@@ -3,9 +3,11 @@
 #include "engine/app.hpp"
 #include "engine/components/camera.hpp"
 #include "engine/components/transform.hpp"
+#include "engine/quickVector.hpp"
 #include "engine/window.hpp"
 #include "glm/fwd.hpp"
 #include <intrin.h>
+#include <limits>
 
 namespace engine
 {
@@ -24,15 +26,10 @@ struct pointerRead : public component
   private:
     struct entry
     {
-        GLuint vao = 0;
-        GLsizei verticesCount = 0;
-        glm::mat4 model{};
-        pointerRead *instance = nullptr;
-
-        constexpr entry()
-            : vao(0), verticesCount(0), model(), instance(nullptr)
-        {
-        }
+        GLuint vao;
+        GLsizei verticesCount;
+        glm::mat4 modelMatrix;
+        pointerRead *instance;
     };
 
   public:
@@ -46,8 +43,8 @@ struct pointerRead : public component
         // apply immediately
         if (getEnabled())
         {
-            s_hashes[_id].verticesCount = verticesCount;
-            s_hashes[_id].vao = vao;
+            s_id2Object[_id - 1].verticesCount = verticesCount;
+            s_id2Object[_id - 1].vao = vao;
         }
     }
 
@@ -58,15 +55,15 @@ struct pointerRead : public component
 
     bool created_() override
     {
-        initialize_();
         disallowMultipleComponents(pointerRead);
-        if (s_hashesCount == hashTypeMax)
+        if (s_id2Object.size() == maxId)
         {
-            log::logError("Removed the new component \"{}\" of entity \"{}\". Cannot have more than {} instances of this component.", getTypeName(), getEntity()->name, hashTypeMax);
+            log::logError("cannot create more {} components because the maximum number ({}) has reached.", getTypeName(), maxId);
             return false;
         }
         if (!(_transform = getEntity()->ensureComponentExists<transform>()))
             return false;
+        initialize_();
         _transform->pushLock();
         return true;
     }
@@ -78,80 +75,71 @@ struct pointerRead : public component
 
     void enabled_() override
     {
-        // add to hashes
-        _id = s_hashesCount++;
-        s_hashes[_id].model = _transform->getGlobalMatrix();
-        s_hashes[_id].instance = this;
-        s_hashes[_id].vao = _vao;
-        s_hashes[_id].verticesCount = _verticesCount;
+        // add to map
+        s_id2Object.push_back({.vao = _vao,
+                               .verticesCount = _verticesCount,
+                               .instance = this});
+        _id = s_id2Object.size(); // we want to start from 1, since 0 is invalid
     }
 
     void disabled_() override
     {
-        // remove from hashes
-        s_hashes[_id] = std::move(s_hashes[--s_hashesCount]);
-        if (_id != s_hashesCount)
-            s_hashes[_id].instance->_id = _id;
+        // swap with the last and remove last
+        s_id2Object[_id - 1] = s_id2Object.pop_back_get();
+        s_id2Object[_id - 1].instance->_id = _id;
     }
 
   private:
-    using hashType = unsigned short;
+    // ID of objects
+    using idType = unsigned int;
 
-    // maximum number of hashes, also used as an invalid state for hashes
-    static inline constexpr hashType hashTypeMax = hashType(-1);
+    // maximum number of IDs
+    static inline constexpr idType maxId = std::numeric_limits<idType>::max();
 
-    // entries for all hashes currently occupied
-    // also works as a hash id itself, starting from 1 (because 0 is clear-color)
-    static inline entry s_hashes[hashTypeMax];
+    // shortcut for invalid ID
+    static inline constexpr idType invalidId = static_cast<idType>(0);
 
-    // count of hashes currently occupied
-    static inline hashType s_hashesCount = 0;
+    // entries for all IDs currently occupied. index is `ID-1` of the object it maps to
+    static inline quickVector<entry> s_id2Object;
 
-    // hashes of the last frame's screen. rows first. hashes are +1 of the actual hashes, because 0 is clear color
-    static inline hashType *s_screenHashes = nullptr;
+    // IDs of the last frame's screen. rows first
+    static inline quickVector<idType> s_screenIds;
 
-    // x: outter size (columns) y: inner size (rows)
-    static inline glm::ivec2 s_screenHashesSizes;
+    static inline GLuint s_screenIdMapTexture = 0, s_screenIdMapFrameBuffer = 0, s_screenIdMapDepthBuffer = 0;
 
-    // for hashes
-    static inline GLuint s_texture = 0, s_frameBuffer = 0;
+    // ID of the last object under the pointer (in the last frame). can be invalid
+    static inline idType s_lastPointedId = invalidId;
 
-    // id of the last object under the pointer (in the last frame). starts from 0
-    static inline hashType s_lastPointedId = hashTypeMax;
-
-    // index of this instance in the s_screenHashes
-    hashType _id;
+    // ID and index of this instance in the s_id2Object
+    idType _id;
 
     static inline void initialize_()
     {
         ensureExecutesOnce();
-        updateScreenHashesBuffer_();
-        graphics::frameBufferSizeChanged.push_back(updateScreenHashesBuffer_);
+        updateScreenIdsBuffer_();
+        graphics::frameBufferSizeChanged.push_back(updateScreenIdsBuffer_);
         if (graphics::getRenderer() == graphics::renderer::opengl)
         {
             const auto vertexShader = R"(
             #version 460 core
             layout(location = 0) in vec3 position;
-            uniform mat4 modelMatrix; 
-            uniform mat4 viewMatrix; 
-            uniform mat4 projectionMatrix; 
-            uniform uint hash;
-            out uint outHash;
-
+            uniform mat4 modelMatrix;
+            uniform mat4 viewMatrix;
+            uniform mat4 projectionMatrix;
+            
             void main()
             {
                 gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.f);
-                outHash = hash;
             }
             )";
             const auto fragmentShader = R"(
             #version 460 core
-            in flat uint outHash;
-            layout(location = 0) out uint result;
+            uniform uint id;
+            out uint FragColor;
 
             void main()
             {
-                result = outHash;
+                FragColor = id;
             }
             )";
 
@@ -160,70 +148,70 @@ struct pointerRead : public component
             static GLint s_modelMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "modelMatrix");
             static GLint s_viewMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "viewMatrix");
             static GLint s_projectionMatrixLocation = graphics::opengl::fatalGetLocation(s_program, "projectionMatrix");
-            static GLint s_hashLocation = graphics::opengl::fatalGetLocation(s_program, "hash");
+            static GLint s_idLocation = graphics::opengl::fatalGetLocation(s_program, "id");
 
             application::preComponentHooks.push_back([]() {
-                bench("update screen object hashes");
+                bench("update screen object ids");
                 if (input::isMouseInWindow())
                 {
-                    // update data
-                    for (size_t i = 0; i < s_hashesCount; i++)
-                        s_hashes[i].model = s_hashes[i].instance->_transform->getGlobalMatrix();
-
                     camera *camera = camera::getMainCamera();
                     if (!camera)
                         return;
+
+                    // update model matrices
+                    s_id2Object.forEachParallel([](entry &entry) {
+                        entry.modelMatrix = entry.instance->_transform->getGlobalMatrix();
+                    });
+
                     // render to frame buffer
                     graphics::opengl::noBlendContext _; // disable blending (RAII)
-                    glBindFramebuffer(GL_FRAMEBUFFER, s_frameBuffer);
+                    glBindFramebuffer(GL_FRAMEBUFFER, s_screenIdMapFrameBuffer);
                     glClearColor(0, 0, 0, 0);
                     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                     glUseProgram(s_program);
                     glUniformMatrix4fv(s_viewMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getViewMatrix()));
                     glUniformMatrix4fv(s_projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(camera->getProjectionMatrix()));
-                    for (size_t i = 0; i < s_hashesCount; i++)
-                        if (s_hashes[i].vao)
+                    s_id2Object.forEachIndexed([](const size_t index, const entry &entry) {
+                        if (entry.vao)
                         {
-                            glBindVertexArray(s_hashes[i].vao);
-                            glUniformMatrix4fv(s_modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(s_hashes[i].model));
-                            glUniform1ui(s_hashLocation, static_cast<GLuint>(i + 1)); // 0 is clear color
-                            glDrawElements(GL_TRIANGLES, s_hashes[i].verticesCount, GL_UNSIGNED_INT, 0);
+                            glBindVertexArray(entry.vao);
+                            glUniformMatrix4fv(s_modelMatrixLocation, 1, GL_FALSE, glm::value_ptr(entry.modelMatrix));
+                            glUniform1ui(s_idLocation, index + 1); // 0 is clear color
+                            glDrawElements(GL_TRIANGLES, entry.verticesCount, GL_UNSIGNED_INT, 0);
                         }
+                    });
 
-                    // readback
-                    glReadBuffer(GL_COLOR_ATTACHMENT0); // read s_texture
-                    glReadPixels(0, 0, s_screenHashesSizes.x, s_screenHashesSizes.y, GL_RED_INTEGER, GL_UNSIGNED_SHORT, s_screenHashes);
+                    // read back
+                    const auto &frameBufferSize = graphics::getFrameBufferSize();
+                    glReadBuffer(GL_COLOR_ATTACHMENT0);
+                    glReadPixels(0, 0, frameBufferSize.x, frameBufferSize.y, GL_RED_INTEGER, GL_UNSIGNED_INT, s_screenIds.data());
 
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                    glUseProgram(0);
                     glBindVertexArray(0);
+                    glUseProgram(0);
 
                     // update objects
-                    auto mousePos = input::getMousePosition() + (graphics::getFrameBufferSize() / 2);
+                    auto mousePos = input::getMousePosition() + (graphics::getFrameBufferSize() / 2); // convert to opengl conventions
                     fatalAssert(mousePos.x >= 0 && mousePos.y >= 0 && mousePos.x < graphics::getFrameBufferSize().x && mousePos.y < graphics::getFrameBufferSize().y, "mouse position outside of window");
-                    const auto ind =
-                        (graphics::getFrameBufferSize().y - mousePos.y - 1) // -1 to avoid false readPixels on the top-most row pixels
-                            * s_screenHashesSizes.x +
-                        mousePos.x;
-                    const hashType newPointedId = s_screenHashes[ind] - static_cast<hashType>(1); // -1 because 0 is clear color
-                    const hashType newPointdRaw = s_screenHashes[ind];
+                    const auto ind = mousePos.y * frameBufferSize.x + mousePos.x;
+                    const idType newPointedId = s_screenIds[ind];
                     if (newPointedId == s_lastPointedId)
                         return;
-                    if (newPointdRaw > s_hashesCount)
+                    if (newPointedId > s_id2Object.size())
                     {
                         drawDebugFrameBuffer();
-                        fatalAssert(false, ("invalid hash read: " + std::to_string(newPointedId)).c_str());
+                        fatalAssert(false, ("invalid id read: " + std::to_string(newPointedId)).c_str());
                     }
                     // call onPointerExit
-                    if (s_lastPointedId != hashTypeMax)
+                    if (s_lastPointedId != invalidId)
                     {
-                        const auto callback = s_hashes[s_lastPointedId].instance->onPointerExit;
+                        const auto callback = s_id2Object[s_lastPointedId - 1].instance->onPointerExit;
                         callback.forEach([](const auto &func) { func(); });
                     }
                     // call onPointerEnter
-                    if (newPointedId != hashTypeMax)
+                    if (newPointedId != invalidId)
                     {
-                        const auto callback = s_hashes[newPointedId].instance->onPointerEnter;
+                        const auto callback = s_id2Object[newPointedId - 1].instance->onPointerEnter;
                         callback.forEach([](const auto &func) { func(); });
                     }
                     s_lastPointedId = newPointedId;
@@ -231,12 +219,12 @@ struct pointerRead : public component
                 else // mouse not in window
                 {
                     // call onPointerExit
-                    if (s_lastPointedId != hashTypeMax)
+                    if (s_lastPointedId != invalidId)
                     {
-                        const auto callback = s_hashes[s_lastPointedId].instance->onPointerExit;
+                        const auto callback = s_id2Object[s_lastPointedId - 1].instance->onPointerExit;
                         callback.forEach([](const auto &func) { func(); });
                     }
-                    s_lastPointedId = hashTypeMax;
+                    s_lastPointedId = invalidId;
                 }
             });
 
@@ -250,56 +238,51 @@ struct pointerRead : public component
     }
 
     // deletes/updates buffers (both for CPU-side and GPU-side)
-    static inline void updateScreenHashesBuffer_()
+    static inline void updateScreenIdsBuffer_()
     {
-        s_screenHashesSizes = graphics::getFrameBufferSize();
+        const auto bufferSize = graphics::getFrameBufferSize();
 
-        // create new texture readback buffer
-        free(s_screenHashes); // it's ok to free nullptr
-        s_screenHashes = static_cast<hashType *>(malloc(s_screenHashesSizes.x * s_screenHashesSizes.y * sizeof(hashType)));
+        s_screenIds.reserve(bufferSize.x * bufferSize.y);
+        s_screenIds.setSize(s_screenIds.getCapacity());
 
         if (graphics::getRenderer() == graphics::renderer::opengl)
         {
             // texture
-            if (s_texture)
-                glDeleteTextures(1, &s_texture);
-            glGenTextures(1, &s_texture);
-            glBindTexture(GL_TEXTURE_2D, s_texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_R16UI /* because of unsigned short */,
-                         static_cast<GLsizei>(s_screenHashesSizes.x), static_cast<GLsizei>(s_screenHashesSizes.y),
-                         0, GL_RED_INTEGER, GL_UNSIGNED_SHORT, nullptr);
+            if (s_screenIdMapTexture)
+                glDeleteTextures(1, &s_screenIdMapTexture);
+            glGenTextures(1, &s_screenIdMapTexture);
+            glBindTexture(GL_TEXTURE_2D, s_screenIdMapTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI /* because of unsigned int */,
+                         bufferSize.x, bufferSize.y,
+                         0, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
             // no filtering
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
             // frame buffer
-            if (!s_frameBuffer)
-                glGenFramebuffers(1, &s_frameBuffer);
-            glBindFramebuffer(GL_FRAMEBUFFER, s_frameBuffer);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_texture, 0);
+            if (!s_screenIdMapFrameBuffer)
+                glGenFramebuffers(1, &s_screenIdMapFrameBuffer);
+            glBindFramebuffer(GL_FRAMEBUFFER, s_screenIdMapFrameBuffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_screenIdMapTexture, 0);
 
             // depth buffer
-            static GLuint s_depth = 0;
-            if (!s_depth)
-                glGenRenderbuffers(1, &s_depth);
-            glBindRenderbuffer(GL_RENDERBUFFER, s_depth);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, s_screenHashesSizes.x, s_screenHashesSizes.y);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_depth);
+            if (s_screenIdMapDepthBuffer)
+                glDeleteBuffers(1, &s_screenIdMapDepthBuffer);
+            glGenRenderbuffers(1, &s_screenIdMapDepthBuffer);
+            glBindRenderbuffer(GL_RENDERBUFFER, s_screenIdMapDepthBuffer);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, bufferSize.x, bufferSize.y);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_screenIdMapDepthBuffer);
 
             fatalAssert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "could not create framebuffer for pointerRead component");
 
             // unbind
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glBindTexture(GL_TEXTURE_2D, 0);
-            glBindRenderbuffer(GL_RENDERBUFFER, 0);
         }
-
-        log::logInfo("{} size:{}", s_screenHashesSizes, s_screenHashesSizes.x * s_screenHashesSizes.y);
     }
 
     static inline void drawDebugFrameBuffer()
     {
-        graphics::opengl::displayFrameBufferAsHashFullScreen(s_frameBuffer, 1);
+        graphics::opengl::displayFrameBufferAsHashFullScreen(s_screenIdMapFrameBuffer, 1);
     }
 };
 

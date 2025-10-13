@@ -721,7 +721,7 @@ struct graphics final
     }
 
     // get frame buffer size
-    static inline glm::ivec2 getFrameBufferSize() noexcept
+    static inline const glm::ivec2& getFrameBufferSize() noexcept
     {
         return s_frameBufferSize;
     }
