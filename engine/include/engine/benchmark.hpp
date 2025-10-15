@@ -29,24 +29,42 @@ struct benchmark final
 };
 } // namespace engine
 
-// perform benchmark on the current context
 #ifndef DEPLOY
 #ifdef TRACY_ENABLE
+// perform benchmark on the current context
 #define bench(label) ZoneScopedN(label);
+// same as bench, but with runtime string
+#define benchDynamic(label, length) \
+    bench("不明");                  \
+    ZoneName(label, length);
 // exeuctes the code inside a hidden scope. useful for oneliner benchmarks
 #define benchCode(label, Code) \
     {                          \
-        ZoneScopedN(label);    \
+        bench(label);          \
         Code;                  \
     };
-#else
+#else // !TRACY_ENABLE
+// perform benchmark on the current context
 #define bench(label)                                                         \
     static auto *s_vtuneLabel##__LINE__ = __itt_string_handle_create(label); \
     engine::benchmark bench##__LINE__                                        \
     {                                                                        \
         s_vtuneLabel##__LINE__                                               \
     }
+// same as bench, but with runtime string
+#define benchDynamic(label, length) bench(label);
+// exeuctes the code inside a hidden scope. useful for oneliner benchmarks
+#define benchCode(label, Code) \
+    {                          \
+        bench(label);          \
+        Code;                  \
+    };
 #endif
-#else
-#define bench(label)
+#else // DEPLOY
+// no-op (because `DEPLOY` is true)
+#define bench(label) ;
+// no-op (because `DEPLOY` is true)
+#define benchDynamic(label, length) ;
+// no-op (because `DEPLOY` is true)
+#define benchCode(label, Code) ;
 #endif

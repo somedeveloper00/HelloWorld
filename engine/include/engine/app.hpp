@@ -527,6 +527,9 @@ struct application
 
     // hooks to execute after component updates in the loop
     static inline auto &postComponentHooks = *new quickVector<std::function<void()>>();
+    
+    // hooks to execute after component updates in the loop (and after postComponentHooks)
+    static inline auto &postComponentHooks2 = *new quickVector<std::function<void()>>();
 
     // hooks to execute after the application is closed
     static inline auto &onExitHooks = *new quickVector<std::function<void()>>();
@@ -594,6 +597,7 @@ struct application
             TracyPlot(s_tracyEntityCountName, static_cast<long long>(entity::getEntitiesCount()));
 
             executeHooks(postComponentHooks);
+            executeHooks(postComponentHooks2);
             executeHooks(_postLoopExecutes);
             {
                 bench("sleep");

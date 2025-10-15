@@ -1,7 +1,9 @@
 #pragma once
 
+#include "alloc.hpp"
 #include <cstdint>
 #include <process.h>
+#include <tracy/Tracy.hpp>
 #include <type_traits>
 #include <utility>
 
@@ -22,11 +24,11 @@ struct holder
 
 namespace engine
 {
-// holds a reference to an object
-template <typename T, bool Owner>
+// holds a reference to an object and uses tracy profiler
+template <typename T, bool Owner, typename Alloc = rawAlloc<T>>
 struct ref
 {
-    template <typename, bool>
+    template <typename, bool, typename>
     friend struct ref;
 
     // initialize empty weak ref
@@ -43,6 +45,7 @@ struct ref
     ref(bool, Args &&...args)
         : _holderPtr(new holder{new T(std::forward<Args>(args)...), 1, 1})
     {
+        TracyAlloc(_holderPtr->objectPtr, sizeof(T));
     }
 
     // move ref object
@@ -176,6 +179,7 @@ struct ref
 
     void onRemoveHolder_()
     {
+        TracyFree(_holderPtr);
         if constexpr (Owner)
             if (--_holderPtr->ownerCount == 0)
                 // delete the actual object (non owning refs may still reference the nullptr pointer)
