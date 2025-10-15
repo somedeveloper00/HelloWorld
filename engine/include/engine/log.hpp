@@ -1,18 +1,12 @@
 #pragma once
 
-#include "logFormats/glmLogFormats.hpp" // for glm formats
+#include "logFormats/glmLogFormats.hpp" // it's needed for formatting!
+#include "thread.hpp"
 #include <cstdio>
 #include <format>
+#include <mutex>
 #include <stdio.h>
 #include <string>
-
-#ifdef _WIN32
-#include <corecrt_io.h>
-#include <windows.h>
-#else
-#include <stdio.h>
-#include <unistd.h>
-#endif
 
 namespace engine
 {
@@ -21,29 +15,35 @@ class log final
   public:
     using logHandler = void (*)(const std::string &);
 
-    // current info log handler in use
+    // current info log handler in use (thread-safe by design)
     static inline logHandler infoLogHandle = nullptr;
-    // current info log handler in use
+    // current info log handler in use (thread-safe by design)
     static inline logHandler warningLogHandle = nullptr;
-    // current info log handler in use
+    // current info log handler in use (thread-safe by design)
     static inline logHandler errorLogHandle = nullptr;
 
     template <typename... Args>
     static inline void logInfo(const std::string &formatStr, Args &&...args)
     {
-        infoLogHandle("[ENGINE INFO] " + std::vformat(formatStr, std::make_format_args(args...)));
+        s_loggingMutex.lock();
+        infoLogHandle("[ENGINE INFO t:" + threadInfo::getNameAsString() + "] " + std::vformat(formatStr, std::make_format_args(args...)));
+        s_loggingMutex.unlock();
     }
 
     template <typename... Args>
     static inline void logWarning(const std::string &formatStr, Args &&...args)
     {
-        warningLogHandle("[ENGINE WARNING] " + std::vformat(formatStr, std::make_format_args(args...)));
+        s_loggingMutex.lock();
+        warningLogHandle("[ENGINE WARNING t:" + threadInfo::getNameAsString() + "] " + std::vformat(formatStr, std::make_format_args(args...)));
+        s_loggingMutex.unlock();
     }
 
     template <typename... Args>
     static inline void logError(const std::string &formatStr, Args &&...args)
     {
-        errorLogHandle("[ENGINE ERROR] " + std::vformat(formatStr, std::make_format_args(args...)));
+        s_loggingMutex.lock();
+        errorLogHandle("[ENGINE ERROR t:" + threadInfo::getNameAsString() + "] " + std::vformat(formatStr, std::make_format_args(args...)));
+        s_loggingMutex.unlock();
     }
 
     static inline void initialize()
@@ -60,17 +60,9 @@ class log final
         s_initialized = true;
     }
 
-    // uses isatty
-    static inline bool isConnectedToTerminal()
-    {
-#ifdef _WIN32
-        return _isatty(_fileno(stdout));
-#else
-        return isatty(fileno(stdout));
-#endif
-    }
-
   private:
+    static inline std::mutex s_loggingMutex;
+
     static inline auto defaultInfoLogHandle = [](const std::string &msg) {
         fputs("\033[1;32m", stdout);
         fputs(msg.c_str(), stdout);

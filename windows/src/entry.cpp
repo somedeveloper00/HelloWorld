@@ -1,5 +1,4 @@
 // clang-format off
-#include "engine/data.hpp"
 #include "engine/window.hpp"
 // clang-format on
 
@@ -10,6 +9,8 @@
 #include "engine/components/ui/canvasRendering.hpp"
 #include "engine/components/ui/uiImage.hpp"
 #include "engine/components/ui/uiImageButton.hpp"
+#include "engine/data.hpp"
+#include "engine/tasks.hpp"
 #include "engine/worldGrid.hpp"
 #include "fpsMoveAround.hpp"
 #include <cmath>
@@ -20,9 +21,11 @@ int main()
     __itt_pause();
     engine::log::initialize();
     engine::graphics::initialize("Hello Enigne!", {100, 100}, {800, 600}, false, false, engine::graphics::renderer::opengl);
-    engine::worldGridSystem::initialize();
     engine::graphics::opengl::debugModeContext _;
+    engine::tasks::initialize();
+    engine::worldGridSystem::initialize();
     initializeDebugShortcuts();
+
     // engine::entity::create("triangle")->addComponent<engine::test::renderTriangle>();
     auto camera = engine::entity::create("camera");
     camera->addComponent<engine::camera>();

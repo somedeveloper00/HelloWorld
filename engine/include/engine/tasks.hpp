@@ -4,6 +4,7 @@
 #include "engine/app.hpp"
 #include "engine/benchmark.hpp"
 #include "engine/quickVector.hpp"
+#include "thread.hpp"
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -14,7 +15,7 @@
 namespace engine
 {
 // multi-threading system for high performance scenarios and with minimal difficulties
-struct task final
+struct tasks final
 {
     // if -1, it'll be equal to the number of CPU
     static constexpr size_t ThreadCount = -1;
@@ -23,16 +24,14 @@ struct task final
     // The more this value is, the faster the tasks are started, but the more CPU usage it'll cause.
     static constexpr float HighPerformanceSpinLockDuration = 0.1f;
 
-    task() = delete;
+    tasks() = delete;
 
     static inline void initialize()
     {
         ensureExecutesOnce();
         size_t count = ThreadCount == -1 ? std::thread::hardware_concurrency() : ThreadCount;
         while (--count > 0)
-        {
-            std::thread(threadPoolLoop_());
-        }
+            new std::thread(threadPoolLoop_, count); // it's OK | we'll never want to delete these threads
         engine::application::postComponentHooks2.push_back([]() {
             // wait for all tasks to finish (also help them out)
             while (executeNextTaskIfAvailable())
@@ -81,9 +80,9 @@ struct task final
         // delegate tasks to threads (insert at a place so they'll get picked up next)
         s_tasksMutex.lock();
         const size_t finishedTasksCountEnd = s_startedTasksCount + End - Start;
-        task newTasks[End - Start];
+        tasks newTasks[End - Start];
         for (size_t i = Start; i < End; i++)
-            new (newTasks[i]) task{std::forward<Func>(function), i};
+            new (newTasks[i]) tasks{std::forward<Func>(function), i};
         s_tasks.insertRange(s_startedTasksCount, newTasks, End - Start);
         s_tasksMutex.unlock();
 
@@ -144,13 +143,14 @@ struct task final
     // comment
     static inline void threadPoolLoop_(const size_t index)
     {
-        log::logInfo("thread number {} with hash {} started.", index, getThreadHash());
+        threadInfo::setName(("task-thread-" + std::to_string(index)).c_str());
+        log::logInfo("thread index {} started.", index);
         while (true) // never close | OS will handle closing
         {
             // execute until nothing's left
             while (executeNextTaskIfAvailable())
             {
-                log::logInfo("thread {} finished a task.", getThreadHash());
+                log::logInfo("thread index {} finished a task.", index);
             }
 
             {
@@ -183,7 +183,7 @@ struct task final
 
         {
             bench("task");
-            log::logInfo("executing \"{}\" in thread \"{}\"", task.name, getThreadHash());
+            log::logInfo("executing \"{}\"", task.name);
             task.executeOnThisThread();
         }
 
@@ -193,11 +193,6 @@ struct task final
         s_tasksMutex.unlock();
 
         return true;
-    }
-
-    static size_t getThreadHash()
-    {
-        return std::hash<std::thread::id>{}(std::this_thread::get_id());
     }
 
     // empties every frame
