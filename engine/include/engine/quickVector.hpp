@@ -259,14 +259,14 @@ struct quickVector
     void insertRange(const size_t index, const T *ptr, const size_t count)
     {
         modificationContextBegin_();
-        while (_size + count > _capacity)
-            realloc_(getIncrementedCapacity_());
-        _size += count;
         assertRange_(index + count - 1);
+        if (_size + count > _capacity)
+            realloc_(getIncrementedCapacity_(_size + count));
+        _size += count;
         for (size_t i = _size; i-- > index + 1;)
             new (&_data[i]) T(std::move(_data[i - 1]));
-        for (size_t i = index; i < index + count; i++)
-            new (&_data[index]) T(std::move(ptr[i]));
+        for (size_t i = 0; i < count; i++)
+            new (&_data[index + i]) T(std::move(ptr[i]));
         modificationContextEnd_();
     }
 
@@ -274,10 +274,10 @@ struct quickVector
     void emplace(const size_t index, Args &&...args)
     {
         modificationContextBegin_();
+        assertRange_(index);
         if (_size + 1 > _capacity)
             realloc_(getIncrementedCapacity_());
         _size++;
-        assertRange_(index);
         for (size_t i = _size; i-- > index + 1;)
             new (&_data[i]) T(std::move(_data[i - 1]));
         new (&_data[index]) T(std::forward<Args>(args)...);
@@ -285,17 +285,19 @@ struct quickVector
     }
 
     // faster than multiple emplace
-    template <typename... Args>
-    void emplaceRange(const size_t index, Args &&...args)
+    // ArgGetters: has one argument size_t which is the index. should return an argument for the final T
+    template <typename... ArgGetters>
+    void emplaceRange(const size_t index, const size_t count, ArgGetters &&...argGetters)
     {
         modificationContextBegin_();
-        if (_size + 1 > _capacity)
-            realloc_(getIncrementedCapacity_());
-        _size++;
         assertRange_(index);
+        if (_size + count > _capacity)
+            realloc_(getIncrementedCapacity_(_size + count));
+        _size += count;
         for (size_t i = _size; i-- > index + 1;)
             new (&_data[i]) T(std::move(_data[i - 1]));
-        new (&_data[index]) T(std::forward<Args>(args)...);
+        for (size_t i = 0; i < count; i++)
+            new (&_data[index + i]) T(argGetters(i)...);
         modificationContextEnd_();
     }
 
@@ -321,8 +323,8 @@ struct quickVector
     void push_backRange(const T *ptr, const size_t count)
     {
         modificationContextBegin_();
-        while (_size + count > _capacity)
-            realloc_(getIncrementedCapacity_());
+        if (_size + count > _capacity)
+            realloc_(getIncrementedCapacity_(_size + count));
         for (size_t i = 0; i < count; i++)
             new (&_data[_size + i]) T(std::move(ptr[i]));
         _size += count;
@@ -345,9 +347,10 @@ struct quickVector
     {
         modificationContextBegin_();
         if (_size + 1 > _capacity)
-            realloc_(getIncrementedCapacity_());
+            realloc_(getIncrementedCapacity_(_size + count));
         for (size_t i = 0; i < count; i++)
-            new (&_data[_size++]) T(ArgGetters(i)...);
+            new (&_data[_size + i]) T(argGetters(i)...);
+        _size += count;
         modificationContextEnd_();
     }
 
@@ -625,6 +628,14 @@ struct quickVector
     size_t getIncrementedCapacity_()
     {
         return _capacity == 0 ? 1 : _capacity * Increment;
+    }
+
+    size_t getIncrementedCapacity_(const size_t minimumTarget)
+    {
+        size_t result = _capacity;
+        while (result < minimumTarget)
+            result = (result == 0 ? 1 : result * Increment);
+        return result;
     }
 
     // during DEBUG, it'll guard against start a new modification while another is ongoing and while a foreach is ongoing
