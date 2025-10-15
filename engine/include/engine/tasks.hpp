@@ -4,6 +4,7 @@
 #include "engine/app.hpp"
 #include "engine/benchmark.hpp"
 #include "engine/quickVector.hpp"
+#include "errorHandling.hpp"
 #include "thread.hpp"
 #include <cstdint>
 #include <functional>
@@ -68,22 +69,21 @@ struct tasks final
     }
 
     // executes the function for the specified number of indices right away (by the time it returns, all is done).
-    // Start is inclusive, End is exclusive.
+    // start is inclusive, end is exclusive.
     // the function must have only one parameter, being `size_t`; it'll refer to the index of the function.
-    template <size_t Start, size_t End, typename Func>
-        requires(Start <= End)
-    static inline void executeNow(Func &&function)
+    static inline void executeNow(const size_t start, const size_t end, Func &&function)
     {
-        if constexpr (Start == End)
-            return;
+#if DEBUG
+        fatalAssert(start < end, "incorrect range was given.");
+#endif
 
         // delegate tasks to threads (insert at a place so they'll get picked up next)
         s_tasksMutex.lock();
-        const size_t finishedTasksCountEnd = s_startedTasksCount + End - Start;
-        tasks newTasks[End - Start];
+        const size_t finishedTasksCountEnd = s_startedTasksCount + end - start;
+        tasks newTasks[end - start];
         for (size_t i = Start; i < End; i++)
             new (newTasks[i]) tasks{std::forward<Func>(function), i};
-        s_tasks.insertRange(s_startedTasksCount, newTasks, End - Start);
+        s_tasks.insertRange(s_startedTasksCount, newTasks, end - start);
         s_tasksMutex.unlock();
 
         // wake up necessary threads
@@ -97,7 +97,7 @@ struct tasks final
         // check tasks status (spin-lock | high performance)
     checkStatus:
         s_tasksMutex.lock();
-        for (size_t i = Start; i < End; i++)
+        for (size_t i = start; i < end; i++)
             if (s_tasksStatus[i] != taskStatus::finished)
             {
                 s_tasksMutex.unlock();

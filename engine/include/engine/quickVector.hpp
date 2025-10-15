@@ -2,6 +2,7 @@
 
 #include "alloc.hpp"
 #include "engine/errorHandling.hpp"
+#include "engine/tasks.hpp"
 #include "engine/template.hpp"
 #include "template.hpp"
 #include <algorithm>
@@ -195,78 +196,6 @@ struct quickVector
         return !equals_(this, &other);
     }
 
-    void push_back(const T &value)
-    {
-        modificationContextBegin_();
-        if (_size + 1 > _capacity)
-            realloc_(getIncrementedCapacity_());
-        new (&_data[_size++]) T(value);
-        modificationContextEnd_();
-    }
-
-    // it's faster than multiple push_back
-    void push_backRange(const T *ptr, const size_t count)
-    {
-        modificationContextBegin_();
-        while (_size + count > _capacity)
-            realloc_(getIncrementedCapacity_());
-        for (size_t i = 0; i < count; i++)
-            new (&_data[_size + i]) T(std::move(ptr[i]));
-        _size += count;
-        modificationContextEnd_();
-    }
-
-    void push_back(const T &&value)
-    {
-        modificationContextBegin_();
-        if (_size + 1 > _capacity)
-            realloc_(getIncrementedCapacity_());
-        new (&_data[_size++]) T(std::move(value));
-        modificationContextEnd_();
-    }
-
-    template <typename... Args>
-    void emplace_back(Args &&...args)
-    {
-        modificationContextBegin_();
-        if (_size + 1 > _capacity)
-            realloc_(getIncrementedCapacity_());
-        new (&_data[_size++]) T(std::forward<Args>(args)...);
-        modificationContextEnd_();
-    }
-
-    // ArgGetters: has one argument size_t which is the index. should return an argument for the final T
-    template <typename... ArgGetters>
-    void emplace_backRange(const size_t count, ArgGetters &&...argGetters)
-    {
-        modificationContextBegin_();
-        if (_size + 1 > _capacity)
-            realloc_(getIncrementedCapacity_());
-        for (size_t i = 0; i < count; i++)
-            new (&_data[_size++]) T(ArgGetters(i)...);
-        modificationContextEnd_();
-    }
-
-    void pop_back()
-    {
-        modificationContextBegin_();
-        assertRange_(0);
-        destructItem_(_data[_size - 1]);
-        _size--;
-        modificationContextEnd_();
-    }
-
-    T pop_back_get()
-    {
-        modificationContextBegin_();
-        assertRange_(0);
-        T data = std::move(_data[_size - 1]);
-        destructItem_(_data[_size - 1]); // might not be necessary but just in case
-        _size--;
-        modificationContextEnd_();
-        return data;
-    }
-
     const size_t &getCapacity() const noexcept
     {
         return _capacity;
@@ -287,6 +216,29 @@ struct quickVector
             fatalAssert(size <= _capacity, "cannot set the size to a value greater than the vector's capacity");
         _size = size;
         modificationContextEnd_();
+    }
+
+    void clear()
+    {
+        modificationContextBegin_();
+        for (size_t i = 0; i < _size; ++i)
+            destructItem_(_data[i]);
+        _size = 0;
+        modificationContextEnd_();
+    }
+
+    // will be invalid if there's no items
+    T &back()
+    {
+        modificationContextBegin_();
+        modificationContextEnd_();
+        return _data[_size - 1];
+    }
+
+    // will be invalid if there's no items
+    const T &back() const
+    {
+        return _data[_size - 1];
     }
 
     template <typename Value>
@@ -332,13 +284,91 @@ struct quickVector
         modificationContextEnd_();
     }
 
-    void clear()
+    // faster than multiple emplace
+    template <typename... Args>
+    void emplaceRange(const size_t index, Args &&...args)
     {
         modificationContextBegin_();
-        for (size_t i = 0; i < _size; ++i)
-            destructItem_(_data[i]);
-        _size = 0;
+        if (_size + 1 > _capacity)
+            realloc_(getIncrementedCapacity_());
+        _size++;
+        assertRange_(index);
+        for (size_t i = _size; i-- > index + 1;)
+            new (&_data[i]) T(std::move(_data[i - 1]));
+        new (&_data[index]) T(std::forward<Args>(args)...);
         modificationContextEnd_();
+    }
+
+    void push_back(const T &value)
+    {
+        modificationContextBegin_();
+        if (_size + 1 > _capacity)
+            realloc_(getIncrementedCapacity_());
+        new (&_data[_size++]) T(value);
+        modificationContextEnd_();
+    }
+
+    void push_back(const T &&value)
+    {
+        modificationContextBegin_();
+        if (_size + 1 > _capacity)
+            realloc_(getIncrementedCapacity_());
+        new (&_data[_size++]) T(std::move(value));
+        modificationContextEnd_();
+    }
+
+    // it's faster than multiple push_back
+    void push_backRange(const T *ptr, const size_t count)
+    {
+        modificationContextBegin_();
+        while (_size + count > _capacity)
+            realloc_(getIncrementedCapacity_());
+        for (size_t i = 0; i < count; i++)
+            new (&_data[_size + i]) T(std::move(ptr[i]));
+        _size += count;
+        modificationContextEnd_();
+    }
+
+    template <typename... Args>
+    void emplace_back(Args &&...args)
+    {
+        modificationContextBegin_();
+        if (_size + 1 > _capacity)
+            realloc_(getIncrementedCapacity_());
+        new (&_data[_size++]) T(std::forward<Args>(args)...);
+        modificationContextEnd_();
+    }
+
+    // ArgGetters: has one argument size_t which is the index. should return an argument for the final T
+    template <typename... ArgGetters>
+    void emplace_backRange(const size_t count, ArgGetters &&...argGetters)
+    {
+        modificationContextBegin_();
+        if (_size + 1 > _capacity)
+            realloc_(getIncrementedCapacity_());
+        for (size_t i = 0; i < count; i++)
+            new (&_data[_size++]) T(ArgGetters(i)...);
+        modificationContextEnd_();
+    }
+
+    void pop_back()
+    {
+        modificationContextBegin_();
+        assertRange_(0);
+        destructItem_(_data[_size - 1]);
+        _size--;
+        modificationContextEnd_();
+    }
+
+    T pop_back_get()
+    {
+        modificationContextBegin_();
+        assertRange_(0);
+        T data = std::move(_data[_size - 1]);
+        destructItem_(_data[_size - 1]); // might not be necessary but just in case
+        _size--;
+        modificationContextEnd_();
+        return data;
     }
 
     template <typename Func>
@@ -349,20 +379,6 @@ struct quickVector
             func(_data[i]);
         _size = 0;
         modificationContextEnd_();
-    }
-
-    // will be invalid if there's no items
-    T &back()
-    {
-        modificationContextBegin_();
-        modificationContextEnd_();
-        return _data[_size - 1];
-    }
-
-    // will be invalid if there's no items
-    const T &back() const
-    {
-        return _data[_size - 1];
     }
 
     template <typename Func>
@@ -385,9 +401,10 @@ struct quickVector
     void forEachParallel(Func &&func)
     {
         loopContextBegin_();
+        tasks::executeNow<size_t Start, size_t End>(Func && function)
 #pragma omp parallel for
-        for (signed long long i = 0; i < _size; ++i)
-            func(_data[i]);
+            for (signed long long i = 0; i < _size; ++i)
+                func(_data[i]);
         loopContextEnd_();
     }
 
